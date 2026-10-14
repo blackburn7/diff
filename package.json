@@ -1,9 +1,9 @@
 {
-  "name": "prv",
+  "name": "diff",
   "type": "module",
   "private": true,
   "bin": {
-    "prv": "bin/prv.ts"
+    "diff": "bin/diff.ts"
   },
   "scripts": {
     "server": "bun src/server.ts",

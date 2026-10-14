@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// prv <github PR url | owner/repo#N> — open a fast local "Files changed" view.
+// diff <github PR url | owner/repo#N> — open a fast local "Files changed" view.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { CACHE_ROOT } from '../src/github.ts';
@@ -11,9 +11,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SERVER = join(import.meta.dir, '..', 'src', 'server.ts');
 const LOG = join(CACHE_ROOT, 'server.log');
 
-const USAGE = `usage: prv <https://github.com/owner/repo/pull/N | owner/repo#N> [--no-open]
-       prv --stop      stop the background server
-       prv --restart   restart the background server`;
+const USAGE = `usage: diff <https://github.com/owner/repo/pull/N | owner/repo#N> [--no-open]
+       diff --stop      stop the background server
+       diff --restart   restart the background server`;
 
 function parse(arg: string) {
   const m =
@@ -59,7 +59,7 @@ async function main() {
   if (args.includes('--stop')) return void (await stop());
   if (args.includes('--restart')) {
     await stop();
-    console.log(`prv: server ${await ensureServer()}`);
+    console.log(`diff: server ${await ensureServer()}`);
     return;
   }
   const target = args.find((a) => !a.startsWith('--'));
@@ -80,10 +80,10 @@ async function main() {
   const open = !args.includes('--no-open');
   if (open) Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdio: ['ignore', 'ignore', 'ignore'] });
   // With --no-open, print the full URL (with t0) so scripts can open it and time first paint.
-  console.log(`prv: ${open ? url.replace(/\?.*$/, '') : url}  (server ${server} in ${tServer} ms, ${warm.cached ? 'cached diff shown, refreshing' : 'fetching'})`);
+  console.log(`diff: ${open ? url.replace(/\?.*$/, '') : url}  (server ${server} in ${tServer} ms, ${warm.cached ? 'cached diff shown, refreshing' : 'fetching'})`);
 }
 
 main().catch((e) => {
-  console.error(`prv: ${e instanceof Error ? e.message : e}`);
+  console.error(`diff: ${e instanceof Error ? e.message : e}`);
   process.exit(1);
 });

@@ -28,11 +28,11 @@ export class Highlighter {
       const slot: Slot = { w, langs: new Set(), pending: 0 };
       w.onmessage = (e: MessageEvent<{ id: number; out?: Tok[][][]; error?: string }>) => {
         slot.pending--;
-        if (e.data.error) console.warn('prv highlight:', e.data.error);
+        if (e.data.error) console.warn('diff highlight:', e.data.error);
         this.waiters.get(e.data.id)?.(e.data.out ?? null);
         this.waiters.delete(e.data.id);
       };
-      w.onerror = (e) => console.warn('prv highlight worker:', e.message);
+      w.onerror = (e) => console.warn('diff highlight worker:', e.message);
       this.slots.push(slot);
     }
   }

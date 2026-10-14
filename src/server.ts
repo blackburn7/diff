@@ -1,4 +1,4 @@
-// The prv daemon: serves the app, the per-PR manifest and patches, file
+// The diff daemon: serves the app, the per-PR manifest and patches, file
 // contents for hunk expansion, grammars, and exports.
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -82,7 +82,7 @@ async function buildExport(req: ExportRequest): Promise<{ name: string; html: st
     bundleB64: Buffer.from(gz).toString('base64'),
     workerB64,
   });
-  return { name: `prv-${owner}-${repo}-${number}-${r.headSha.slice(0, 7)}.html`, html };
+  return { name: `diff-${owner}-${repo}-${number}-${r.headSha.slice(0, 7)}.html`, html };
 }
 
 function logTiming(entry: Record<string, unknown>) {
@@ -197,4 +197,4 @@ Bun.serve({
     }
   },
 });
-console.log(`prv listening on http://127.0.0.1:${PORT} (version ${VERSION}, pid ${process.pid})`);
+console.log(`diff listening on http://127.0.0.1:${PORT} (version ${VERSION}, pid ${process.pid})`);

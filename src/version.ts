@@ -1,5 +1,5 @@
 // A cheap fingerprint of the source tree. The CLI restarts a running daemon
-// whose fingerprint differs, so edits take effect on the next `prv`.
+// whose fingerprint differs, so edits take effect on the next `diff`.
 import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';

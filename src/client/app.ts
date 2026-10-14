@@ -648,7 +648,7 @@ class App {
         this.renderHeader();
       }
       if (this.el.flash.firstChild) this.flash(null);
-      console.info(`prv: refresh ${changed ? `→ ${m.headSha.slice(0, 7)}` : 'unchanged'} in ${Math.round(performance.now() - t)} ms`, m.timings);
+      console.info(`diff: refresh ${changed ? `→ ${m.headSha.slice(0, 7)}` : 'unchanged'} in ${Math.round(performance.now() - t)} ms`, m.timings);
     } catch (e) {
       this.flash(`Refresh failed: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -675,13 +675,13 @@ class App {
       const res = await fetch('/api/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? String(res.status));
       const blob = await res.blob();
-      const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'prv-export.html';
+      const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'diff-export.html';
       const a = h('a', { href: URL.createObjectURL(blob), download: name });
       document.body.append(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-      console.info(`prv: exported ${name} (${(blob.size / 1e6).toFixed(2)} MB) in ${Math.round(performance.now() - t)} ms`);
+      console.info(`diff: exported ${name} (${(blob.size / 1e6).toFixed(2)} MB) in ${Math.round(performance.now() - t)} ms`);
     } catch (e) {
       this.flash(`Export failed: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -765,7 +765,7 @@ class App {
       : '';
     const exportedAt = this.live ? null : new Date(this.src.bundle!.exportedAt);
     const snapshot = exportedAt
-      ? `<span class="snapshot" title="Exported from prv ${esc(exportedAt.toLocaleString())}">· snapshot ${esc(exportedAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>`
+      ? `<span class="snapshot" title="Exported from diff ${esc(exportedAt.toLocaleString())}">· snapshot ${esc(exportedAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>`
       : '';
     this.paintKeepingMenus(
       this.el.header,
@@ -972,7 +972,7 @@ async function start(src: Source) {
     e2eFromCli: t0 ? Date.now() - t0 : undefined,
   };
   window.__prvTimings = t;
-  console.info('prv timings', t);
+  console.info('diff timings', t);
   if (src.mode === 'live') {
     void fetch('/api/timing', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(t) }).catch(() => {});
     if (src.manifest.stale) void app.refresh();
@@ -991,7 +991,7 @@ function renderIndex() {
     const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(v) ?? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(v);
     if (m) location.href = `/${m[1]}/${m[2]}/pull/${m[3]}`;
   });
-  document.getElementById('app')!.replaceChildren(h('div', { class: 'index' }, h('h1', {}, 'prv'), input));
+  document.getElementById('app')!.replaceChildren(h('div', { class: 'index' }, h('h1', {}, 'diff'), input));
 }
 
 // Drop an exported .html onto the live page to view it.
@@ -1003,7 +1003,7 @@ function enableDrop() {
     if (!file) return;
     try {
       const b64 = extractEmbedded(await file.text(), 'prv-bundle');
-      if (!b64) throw new Error(`${file.name} is not a prv export`);
+      if (!b64) throw new Error(`${file.name} is not a diff export`);
       await start(sourceFromBundle(await decodeBundle(b64)));
     } catch (err) {
       showError(err instanceof Error ? err.message : String(err));

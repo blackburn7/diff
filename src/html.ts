@@ -40,7 +40,7 @@ export function livePage(p: { owner: string; repo: string; number: number; css: 
   const boot = `window.__prvBoot={mode:'live',owner:${JSON.stringify(p.owner)},repo:${JSON.stringify(p.repo)},number:${p.number},manifest:fetch(${JSON.stringify(api)}).then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t)})})};`;
   const src = `/app.js?v=${p.hash}`;
   return shell({
-    title: `${p.owner}/${p.repo}#${p.number} · prv`,
+    title: `${p.owner}/${p.repo}#${p.number} · diff`,
     css: p.css,
     boot,
     head: `<link rel="modulepreload" href="${src}">\n`,
@@ -51,7 +51,7 @@ export function livePage(p: { owner: string; repo: string; number: number; css: 
 export function indexPage(p: { css: string; hash: string }): string {
   const src = `/app.js?v=${p.hash}`;
   return shell({
-    title: 'prv',
+    title: 'diff',
     css: p.css,
     boot: `window.__prvBoot={mode:'index'};`,
     body: `<script type="module" src="${src}"></script>`,
