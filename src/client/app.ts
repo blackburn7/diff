@@ -614,20 +614,7 @@ class App {
     if (!this.visible.length) return;
     const idx = this.currentIndex();
     if (!this.holding) this.setCurrent(idx);
-    // The file whose header is pinned has scrolled its own top border away;
-    // its header draws one instead.
-    const el = this.view(this.visible[idx]!).el;
-    const stuck = el.getBoundingClientRect().top < this.landTop() - 0.5 ? el : null;
-    if (stuck !== this.stuck) {
-      this.stuck?.classList.remove('is-stuck');
-      this.stuck?.style.removeProperty('--stuck-offset');
-      stuck?.classList.add('is-stuck');
-      this.stuck = stuck;
-    }
-    // Offset inside the box's border, where the pinned header now sits.
-    stuck?.style.setProperty('--stuck-offset', `${this.landTop() - stuck.getBoundingClientRect().top - 1}px`);
   }
-  private stuck: HTMLElement | null = null;
 
   // ----------------------------------------------------------- actions
 
