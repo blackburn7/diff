@@ -386,22 +386,24 @@ class App {
     return this.reviewed[f.path] === f.hash;
   }
 
-  /** Mark or unmark one file: collapse or expand it, and update its tree row. */
+  /** Mark or unmark one file: collapse or expand it, and update its tree row.
+   *  Marking moves on to the next unreviewed file. */
   setReviewed(i: number, on: boolean) {
     const f = this.files[i]!;
     if (on) this.reviewed[f.path] = f.hash;
     else delete this.reviewed[f.path];
     store.set(this.reviewedKey, this.reviewed);
     const v = this.view(i);
-    const wasAbove = v.el.getBoundingClientRect().top < this.landTop();
     v.el.classList.toggle('is-reviewed', on);
     v.el.querySelector<HTMLInputElement>('input[data-act=review]')!.checked = on;
     v.setCollapsed(on);
-    // Keep the file's header in place when it collapses under you.
-    if (on && wasAbove) window.scrollTo({ top: v.el.getBoundingClientRect().top + window.scrollY - this.landTop() });
     this.tree.setReviewed(i, on);
     const viewed = this.el.header.querySelector('.viewed-progress');
     if (viewed) viewed.outerHTML = this.viewedHtml();
+    if (!on) return;
+    const at = this.visible.indexOf(i);
+    const next = [...this.visible.slice(at + 1), ...this.visible.slice(0, at)].find((j) => !this.isReviewed(j));
+    if (next !== undefined) this.jumpTo(next);
   }
 
   toggleCategory(id: string) {
@@ -618,9 +620,12 @@ class App {
     const stuck = el.getBoundingClientRect().top < this.landTop() - 0.5 ? el : null;
     if (stuck !== this.stuck) {
       this.stuck?.classList.remove('is-stuck');
+      this.stuck?.style.removeProperty('--stuck-offset');
       stuck?.classList.add('is-stuck');
       this.stuck = stuck;
     }
+    // Offset inside the box's border, where the pinned header now sits.
+    stuck?.style.setProperty('--stuck-offset', `${this.landTop() - stuck.getBoundingClientRect().top - 1}px`);
   }
   private stuck: HTMLElement | null = null;
 
