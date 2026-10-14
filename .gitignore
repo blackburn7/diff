@@ -1,0 +1,18 @@
+*
+!*/
+
+# root
+!.gitignore
+!README.md
+!package.json
+!bun.lock
+!tsconfig.json
+
+# source trees
+!bin/**
+!src/**
+!test/**
+
+# never these, even inside whitelisted trees
+node_modules/
+.amp/

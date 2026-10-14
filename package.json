@@ -1,0 +1,23 @@
+{
+  "name": "prv",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "prv": "bin/prv.ts"
+  },
+  "scripts": {
+    "server": "bun src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "dependencies": {
+    "@pierre/diffs": "^1.5.2",
+    "shiki": "4.5.0"
+  }
+}

@@ -1,0 +1,355 @@
+// Patch model and GitHub-style diff table rendering (classic `.diff-table`
+// markup: blob-num / blob-code cells, `@@` hunk rows with gutter expanders).
+import { ICONS, type IconName } from './icons.ts';
+
+export type Kind = ' ' | '+' | '-';
+export interface Line {
+  k: Kind;
+  t: string;
+  /** Old/new line numbers; 0 when the side does not have the line. */
+  o: number;
+  n: number;
+  /** Changed character ranges (word highlight). */
+  x?: [number, number][];
+}
+export interface Hunk {
+  header: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: Line[];
+}
+export interface Parsed {
+  hunks: Hunk[];
+  binary: boolean;
+}
+
+const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+export function parsePatch(text: string): Parsed {
+  const hunks: Hunk[] = [];
+  let cur: Hunk | null = null;
+  let o = 0;
+  let n = 0;
+  let binary = false;
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  for (const raw of lines) {
+    if (raw.startsWith('@@')) {
+      const m = HUNK_RE.exec(raw);
+      if (!m) continue;
+      cur = {
+        header: raw,
+        oldStart: +m[1]!,
+        oldLines: m[2] === undefined ? 1 : +m[2],
+        newStart: +m[3]!,
+        newLines: m[4] === undefined ? 1 : +m[4],
+        lines: [],
+      };
+      hunks.push(cur);
+      o = cur.oldStart;
+      n = cur.newStart;
+      continue;
+    }
+    if (!cur) {
+      if (raw.startsWith('Binary files ') || raw === 'GIT binary patch') binary = true;
+      continue;
+    }
+    const c = raw[0];
+    const t = raw.endsWith('\r') ? raw.slice(1, -1) : raw.slice(1);
+    if (c === '+') cur.lines.push({ k: '+', t, o: 0, n: n++ });
+    else if (c === '-') cur.lines.push({ k: '-', t, o: o++, n: 0 });
+    else if (c === ' ') cur.lines.push({ k: ' ', t, o: o++, n: n++ });
+  }
+  for (const h of hunks) markWordDiffs(h.lines);
+  return { hunks, binary };
+}
+
+// ------------------------------------------------------------ word diff
+
+const WORD_MAX = 1000;
+
+function markWordDiffs(lines: Line[]) {
+  for (let i = 0; i < lines.length; ) {
+    if (lines[i]!.k !== '-') {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && lines[j]!.k === '-') j++;
+    let k = j;
+    while (k < lines.length && lines[k]!.k === '+') k++;
+    const dels = lines.slice(i, j);
+    const adds = lines.slice(j, k);
+    for (let p = 0; p < Math.min(dels.length, adds.length); p++) {
+      const r = wordDiff(dels[p]!.t, adds[p]!.t);
+      if (r) {
+        if (r[0].length) dels[p]!.x = r[0];
+        if (r[1].length) adds[p]!.x = r[1];
+      }
+    }
+    i = k;
+  }
+}
+
+const TOKEN_RE = /\w+|\s+|[^\w\s]/g;
+
+/** Changed ranges in a and b, or null when the lines are too different to pair. */
+export function wordDiff(a: string, b: string): [[number, number][], [number, number][]] | null {
+  if (a === b || a.length > WORD_MAX || b.length > WORD_MAX) return null;
+  const ta = a.match(TOKEN_RE) ?? [];
+  const tb = b.match(TOKEN_RE) ?? [];
+  const keepA = new Uint8Array(ta.length);
+  const keepB = new Uint8Array(tb.length);
+  // Trim the common prefix and suffix, then LCS over what is left.
+  let s = 0;
+  while (s < ta.length && s < tb.length && ta[s] === tb[s]) keepA[s] = keepB[s++] = 1;
+  let ea = ta.length;
+  let eb = tb.length;
+  while (ea > s && eb > s && ta[ea - 1] === tb[eb - 1]) keepA[--ea] = keepB[--eb] = 1;
+  const n = ea - s;
+  const m = eb - s;
+  if (n && m && n * m <= 160_000) {
+    const dp = new Uint16Array((n + 1) * (m + 1));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i * (m + 1) + j] = ta[s + i] === tb[s + j] ? dp[(i + 1) * (m + 1) + j + 1]! + 1 : Math.max(dp[(i + 1) * (m + 1) + j]!, dp[i * (m + 1) + j + 1]!);
+    for (let i = 0, j = 0; i < n && j < m; ) {
+      if (ta[s + i] === tb[s + j]) {
+        keepA[s + i++] = 1;
+        keepB[s + j++] = 1;
+      } else if (dp[(i + 1) * (m + 1) + j]! >= dp[i * (m + 1) + j + 1]!) i++;
+      else j++;
+    }
+  }
+  const ranges = (toks: string[], keep: Uint8Array) => {
+    const out: [number, number][] = [];
+    let pos = 0;
+    let same = 0;
+    toks.forEach((t, i) => {
+      if (keep[i]) same += t.length;
+      else if (out.length && out[out.length - 1]![1] === pos) out[out.length - 1]![1] = pos + t.length;
+      else out.push([pos, pos + t.length]);
+      pos += t.length;
+    });
+    return { out, same };
+  };
+  const ra = ranges(ta, keepA);
+  const rb = ranges(tb, keepB);
+  // Like GitHub, skip highlighting when the pair shares little text.
+  if (ra.same + rb.same < 0.5 * (a.length + b.length) * 0.8) return null;
+  return [ra.out, rb.out];
+}
+
+// ------------------------------------------------------------ display model
+
+/** Unshown lines between hunks: old lines [oldFrom, oldTo]; the new side starts at newFrom. */
+export interface Gap {
+  oldFrom: number;
+  oldTo: number;
+  newFrom: number;
+}
+export type Row =
+  | { type: 'hunk'; header: string; gap: Gap | null; first: boolean }
+  | { type: 'tail'; gap: Gap }
+  | { type: 'line'; line: Line };
+
+const firstLine = (s: number, c: number) => (c ? s : s + 1);
+const lastLine = (s: number, c: number) => (c ? s + c - 1 : s);
+
+export function buildRows(p: Parsed, expandable: boolean, hasTail: boolean): Row[] {
+  const rows: Row[] = [];
+  let prevOld = 0;
+  let prevNew = 0;
+  p.hunks.forEach((h, i) => {
+    const from = prevOld + 1;
+    const to = firstLine(h.oldStart, h.oldLines) - 1;
+    const gap = expandable && to >= from ? { oldFrom: from, oldTo: to, newFrom: prevNew + 1 } : null;
+    rows.push({ type: 'hunk', header: h.header, gap, first: i === 0 });
+    for (const l of h.lines) rows.push({ type: 'line', line: l });
+    prevOld = lastLine(h.oldStart, h.oldLines);
+    prevNew = lastLine(h.newStart, h.newLines);
+  });
+  if (expandable && hasTail && p.hunks.length) rows.push({ type: 'tail', gap: { oldFrom: prevOld + 1, oldTo: Infinity, newFrom: prevNew + 1 } });
+  return rows;
+}
+
+export const EXPAND_STEP = 20;
+
+/** Reveal lines of the gap held by rows[i]. `newLines` is the full new file. */
+export function expand(rows: Row[], i: number, dir: 'up' | 'down' | 'all', newLines: string[]): void {
+  const row = rows[i]!;
+  if (row.type === 'line' || !row.gap) return;
+  const g = row.gap;
+  const delta = g.newFrom - g.oldFrom;
+  if (row.type === 'tail') g.oldTo = Math.min(g.oldTo, newLines.length - delta);
+  const count = g.oldTo - g.oldFrom + 1;
+  const ctx = (o: number): Row => ({ type: 'line', line: { k: ' ', t: newLines[o + delta - 1] ?? '', o, n: o + delta } });
+  const take = dir === 'all' ? count : Math.min(EXPAND_STEP, count);
+  const up = dir === 'up' || (dir === 'all' && row.type === 'hunk');
+  if (up) {
+    const add: Row[] = [];
+    for (let o = g.oldTo - take + 1; o <= g.oldTo; o++) add.push(ctx(o));
+    g.oldTo -= take;
+    rows.splice(i + 1, 0, ...add);
+  } else {
+    const add: Row[] = [];
+    for (let o = g.oldFrom; o < g.oldFrom + take; o++) add.push(ctx(o));
+    g.oldFrom += take;
+    g.newFrom += take;
+    rows.splice(i, 0, ...add);
+    i += add.length;
+  }
+  // Like GitHub, a fully expanded gap takes its hunk row with it.
+  if (g.oldTo < g.oldFrom) rows.splice(i, 1);
+}
+
+// ------------------------------------------------------------ rendering
+
+/** Syntax tokens for one line: [text, lightColor, darkColor, italic]. */
+export type Tok = [string, string, string, number];
+export interface Tokens {
+  old: Tok[][];
+  new: Tok[][];
+  /** Line index into old/new: by line number when the docs are full files, else by position. */
+  oldIdx: (l: Line) => number;
+  newIdx: (l: Line) => number;
+}
+
+const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ESC[c]!);
+
+export function svg(name: IconName, cls = ''): string {
+  return `<svg class="octicon octicon-${name}${cls ? ` ${cls}` : ''}" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="${ICONS[name]}"></path></svg>`;
+}
+
+function lineHtml(text: string, toks: Tok[] | undefined, x: [number, number][] | undefined): string {
+  if (!toks || toks.reduce((a, t) => a + t[0].length, 0) !== text.length) toks = [[text, '', '', 0]];
+  if (!x?.length) {
+    return toks.map((t) => (t[1] ? `<span style="--l:${t[1]};--d:${t[2]}"${t[3] ? ' class="pl-i"' : ''}>${esc(t[0])}</span>` : esc(t[0]))).join('');
+  }
+  let out = '';
+  let pos = 0;
+  let ri = 0;
+  for (const t of toks) {
+    let s = 0;
+    while (s < t[0].length) {
+      const abs = pos + s;
+      while (ri < x.length && x[ri]![1] <= abs) ri++;
+      const r = x[ri];
+      const inR = r !== undefined && r[0] <= abs;
+      const end = Math.min(t[0].length, (inR ? r![1] : r ? r[0] : Infinity) - pos);
+      const piece = t[0].slice(s, end);
+      const cls = inR ? `x${abs === r![0] ? ' x-first' : ''}${pos + end === r![1] ? ' x-last' : ''}` : '';
+      const style = t[1] ? ` style="--l:${t[1]};--d:${t[2]}"` : '';
+      out += cls || style ? `<span${cls ? ` class="${cls}${t[3] ? ' pl-i' : ''}"` : t[3] ? ' class="pl-i"' : ''}${style}>${esc(piece)}</span>` : esc(piece);
+      s = end;
+    }
+    pos += t[0].length;
+  }
+  return out;
+}
+
+function codeCell(l: Line, tk: Tokens | null, side?: 'left' | 'right'): string {
+  const cls = l.k === '+' ? 'blob-code-addition' : l.k === '-' ? 'blob-code-deletion' : 'blob-code-context';
+  const toks = tk ? (l.k === '-' ? tk.old[tk.oldIdx(l)] : tk.new[tk.newIdx(l)]) : undefined;
+  return `<td class="blob-code ${cls}"${side ? ` data-split-side="${side}"` : ''}><span class="blob-code-inner blob-code-marker" data-code-marker="${l.k === ' ' ? ' ' : l.k === '+' ? '+' : '-'}">${lineHtml(l.t, toks, l.x)}</span></td>`;
+}
+
+const numCell = (k: Kind, num: number) =>
+  `<td class="blob-num blob-num-${k === '+' ? 'addition' : k === '-' ? 'deletion' : 'context'}" data-line-number="${num}"></td>`;
+const EMPTY = '<td class="blob-num blob-num-empty empty-cell"></td><td class="blob-code blob-code-empty empty-cell"></td>';
+
+function expanders(row: Extract<Row, { type: 'hunk' | 'tail' }>, i: number): string {
+  const g = row.gap;
+  if (!g) return '<span class="blob-num-dots">…</span>';
+  const btn = (dir: string, icon: IconName, label: string) =>
+    `<button type="button" class="directional-expander" data-expand="${dir}" data-row="${i}" aria-label="${label}" title="${label}">${svg(icon)}</button>`;
+  if (row.type === 'tail') return btn('down', 'fold-down', 'Expand Down');
+  if (row.first) return btn('up', 'fold-up', 'Expand Up');
+  const count = g.oldTo - g.oldFrom + 1;
+  if (count <= EXPAND_STEP) return btn('all', 'unfold', 'Expand All');
+  return btn('down', 'fold-down', 'Expand Down') + btn('up', 'fold-up', 'Expand Up');
+}
+
+export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | null): string {
+  let out = '';
+  const nums = mode === 'split' ? 1 : 2;
+  const codeSpan = mode === 'split' ? 3 : 1;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (r.type !== 'line') {
+      const twin = r.gap && r.type === 'hunk' && !r.first && r.gap.oldTo - r.gap.oldFrom + 1 > EXPAND_STEP;
+      out += `<tr class="js-expandable-line${twin ? ' is-twin' : ''}"><td class="blob-num blob-num-expandable" colspan="${nums}">${expanders(r, i)}</td><td class="blob-code blob-code-inner blob-code-hunk" colspan="${codeSpan}">${r.type === 'hunk' ? esc(r.header) : ''}</td></tr>`;
+      continue;
+    }
+    const l = r.line;
+    if (mode === 'unified') {
+      out += `<tr>${l.o ? numCell(l.k, l.o) : '<td class="blob-num blob-num-addition empty-num"></td>'}${l.n ? numCell(l.k, l.n) : '<td class="blob-num blob-num-deletion empty-num"></td>'}${codeCell(l, tk)}</tr>`;
+      continue;
+    }
+    if (l.k === ' ') {
+      out += `<tr>${numCell(' ', l.o)}${codeCell(l, tk, 'left')}${numCell(' ', l.n)}${codeCell(l, tk, 'right')}</tr>`;
+      continue;
+    }
+    // A change block: deletions then additions, paired line by line.
+    const dels: Line[] = [];
+    const adds: Line[] = [];
+    let j = i;
+    while (j < rows.length) {
+      const rj = rows[j]!;
+      if (rj.type !== 'line' || rj.line.k === ' ') break;
+      (rj.line.k === '-' ? dels : adds).push(rj.line);
+      j++;
+    }
+    for (let p = 0; p < Math.max(dels.length, adds.length); p++) {
+      const d = dels[p];
+      const a = adds[p];
+      out += `<tr>${d ? numCell('-', d.o) + codeCell(d, tk, 'left') : EMPTY}${a ? numCell('+', a.n) + codeCell(a, tk, 'right') : EMPTY}</tr>`;
+    }
+    i = j - 1;
+  }
+  return out;
+}
+
+export function colgroup(mode: 'split' | 'unified', maxLine: number): string {
+  // GitHub's number columns: 44px in split, 50px in unified, wider for long files.
+  const w = Math.max(mode === 'split' ? 44 : 50, Math.ceil(String(maxLine).length * 7.23 + 20));
+  return mode === 'split' ? `<colgroup><col width="${w}"><col><col width="${w}"><col></colgroup>` : `<colgroup><col width="${w}"><col width="${w}"><col></colgroup>`;
+}
+
+/** Old and new documents to highlight when only the patch is known. */
+export function patchDocs(rows: Row[]): { old: string; new: string; oldIdx: Map<Line, number>; newIdx: Map<Line, number> } {
+  const o: string[] = [];
+  const n: string[] = [];
+  const oldIdx = new Map<Line, number>();
+  const newIdx = new Map<Line, number>();
+  for (const r of rows) {
+    if (r.type !== 'line') continue;
+    const l = r.line;
+    if (l.k !== '+') {
+      oldIdx.set(l, o.length);
+      o.push(l.t);
+    }
+    if (l.k !== '-') {
+      newIdx.set(l, n.length);
+      n.push(l.t);
+    }
+  }
+  return { old: o.join('\n'), new: n.join('\n'), oldIdx, newIdx };
+}
+
+export function diffstatBlocks(adds: number, dels: number, added = false): string {
+  // GitHub shows an empty new file as five green blocks.
+  if (adds + dels === 0 && added) adds = 1;
+  const total = adds + dels;
+  const slots = Math.min(total, 5);
+  const g = total ? Math.floor((adds / total) * slots) : 0;
+  const r = total ? Math.floor((dels / total) * slots) : 0;
+  let out = '';
+  for (let i = 0; i < 5; i++) out += `<span class="diffstat-block-${i < g ? 'added' : i < g + r ? 'deleted' : 'neutral'}"></span>`;
+  return `<span class="diffstat-blocks">${out}</span>`;
+}
+
+export { esc };
