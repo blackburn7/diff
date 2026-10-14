@@ -34,7 +34,6 @@ export interface ExportBundle {
   patches: (string | null)[];
   enabledCats: string[];
   manual: ManualState;
-  reviewed?: ReviewedState;
   /** Shiki grammars by language name, for the languages of included files. */
   langs: Record<string, unknown[]>;
   prefs: Partial<Prefs>;
@@ -46,7 +45,6 @@ export interface ExportRequest {
   key: string;
   enabledCats: string[];
   manual: ManualState;
-  reviewed: ReviewedState;
   /** File indexes whose contents to leave out. */
   omit: number[];
   prefs: Partial<Prefs>;

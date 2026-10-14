@@ -67,7 +67,6 @@ async function buildExport(req: ExportRequest): Promise<{ name: string; html: st
     patches,
     enabledCats: req.enabledCats,
     manual: req.manual,
-    reviewed: req.reviewed,
     langs,
     prefs: req.prefs,
     exportedAt: Date.now(),

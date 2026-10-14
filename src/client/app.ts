@@ -39,8 +39,8 @@ declare global {
 const PREFS_KEY = 'prv:prefs:v2';
 /** v2: Agent config is hidden by default too; selections saved under the old
  *  key (Geld's default, Tests only) are ignored. */
-const CATS_KEY = 'prv:cats:v2';
-const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents'];
+const CATS_KEY = 'prv:cats:v3';
+const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents', 'docs'];
 /** Patches bigger than this start behind "Load diff", like GitHub's large diffs. */
 const LARGE_PATCH = 150_000;
 const CAT_TITLE = new Map(CATEGORIES.map((c) => [c.id as string, c.title]));
@@ -280,7 +280,6 @@ class App {
     if (src.mode === 'export') {
       this.enabled = new Set(src.bundle!.enabledCats);
       this.manual = { ...src.bundle!.manual };
-      this.reviewed = { ...(src.bundle!.reviewed ?? {}) };
     } else {
       this.enabled = new Set(store.get<string[]>(CATS_KEY, DEFAULT_HIDDEN));
     }
@@ -302,9 +301,11 @@ class App {
   get live() {
     return this.src.mode === 'live';
   }
+  /** Each viewer's own marks: per PR live, per export file for a recipient. */
   get reviewedKey() {
     const { owner, repo, number } = this.m.meta;
-    return `prv:reviewed:${owner}/${repo}#${number}`;
+    const scope = this.live ? '' : `@${this.src.bundle!.exportedAt}`;
+    return `prv:reviewed:${owner}/${repo}#${number}${scope}`;
   }
   get manualKey() {
     const { owner, repo, number } = this.m.meta;
@@ -314,15 +315,13 @@ class App {
   setManifest(m: Manifest) {
     this.m = m;
     this.files = m.files;
-    if (this.live) {
-      this.manual = store.get<ManualState>(this.manualKey, {});
-      this.reviewed = store.get<ReviewedState>(this.reviewedKey, {});
-    }
+    if (this.live) this.manual = store.get<ManualState>(this.manualKey, {});
+    this.reviewed = store.get<ReviewedState>(this.reviewedKey, {});
     // A mark holds only while the file's diff is the one that was reviewed.
     const hashes = new Map(m.files.map((f) => [f.path, f.hash]));
     let dropped = 0;
     for (const [path, h] of Object.entries(this.reviewed)) if (hashes.get(path) !== h) (delete this.reviewed[path], dropped++);
-    if (dropped && this.live) store.set(this.reviewedKey, this.reviewed);
+    if (dropped) store.set(this.reviewedKey, this.reviewed);
     this.views.clear();
     this.forceLoad.clear();
     this.renderQueue.length = 0;
@@ -392,7 +391,7 @@ class App {
     const f = this.files[i]!;
     if (on) this.reviewed[f.path] = f.hash;
     else delete this.reviewed[f.path];
-    if (this.live) store.set(this.reviewedKey, this.reviewed);
+    store.set(this.reviewedKey, this.reviewed);
     const v = this.view(i);
     const wasAbove = v.el.getBoundingClientRect().top < this.landTop();
     v.el.classList.toggle('is-reviewed', on);
@@ -401,6 +400,8 @@ class App {
     // Keep the file's header in place when it collapses under you.
     if (on && wasAbove) window.scrollTo({ top: v.el.getBoundingClientRect().top + window.scrollY - this.landTop() });
     this.tree.setReviewed(i, on);
+    const viewed = this.el.header.querySelector('.viewed-progress');
+    if (viewed) viewed.outerHTML = this.viewedHtml();
   }
 
   toggleCategory(id: string) {
@@ -534,12 +535,24 @@ class App {
     return this.stickyTop() + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--land-gap')) || 0);
   }
 
+  /** Top-align a file at the landing line and make it current, even when it
+   *  is already on screen. The spacer after the last file makes room. */
   jumpTo(i: number) {
     if (i < 0 || this.reasons[i] !== null) return;
     const v = this.view(i);
     if (!v.rendered) v.render();
     this.holdAt(v.el);
-    this.current = this.visible.indexOf(i);
+    this.setCurrent(this.visible.indexOf(i));
+  }
+
+  /** The one current file: the tree's active row and the file's outline. */
+  setCurrent(idx: number) {
+    if (idx === this.current) return;
+    this.el.list.querySelector('.file.is-current')?.classList.remove('is-current');
+    this.current = idx;
+    const i = this.visible[idx];
+    if (i === undefined) return this.tree.setActive(null);
+    this.view(i).el.classList.add('is-current');
     this.tree.setActive(this.files[i]!.path);
   }
 
@@ -547,9 +560,14 @@ class App {
    *  near the viewport render and replace their estimated heights, which would
    *  otherwise push it away. Any user scroll input ends the hold. */
   private holdToken = 0;
+  /** True while a jump is aligning, so scroll tracking doesn't fight it. */
+  private holding = false;
   holdAt(el: HTMLElement) {
     const token = ++this.holdToken;
-    const stop = () => (this.holdToken = token + 1);
+    this.holding = true;
+    const stop = () => {
+      if (this.holdToken === token) (this.holdToken++, (this.holding = false));
+    };
     for (const ev of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(ev, stop, { once: true, capture: true, signal: this.ac.signal });
     let stable = 0;
     let frames = 0;
@@ -561,6 +579,7 @@ class App {
         stable = 0;
       } else stable++;
       if (stable < 6 && ++frames < 90) requestAnimationFrame(align);
+      else stop();
     };
     align();
   }
@@ -592,10 +611,18 @@ class App {
   onScroll() {
     if (!this.visible.length) return;
     const idx = this.currentIndex();
-    if (idx === this.current) return;
-    this.current = idx;
-    this.tree.setActive(this.files[this.visible[idx]!]!.path);
+    if (!this.holding) this.setCurrent(idx);
+    // The file whose header is pinned has scrolled its own top border away;
+    // its header draws one instead.
+    const el = this.view(this.visible[idx]!).el;
+    const stuck = el.getBoundingClientRect().top < this.landTop() - 0.5 ? el : null;
+    if (stuck !== this.stuck) {
+      this.stuck?.classList.remove('is-stuck');
+      stuck?.classList.add('is-stuck');
+      this.stuck = stuck;
+    }
   }
+  private stuck: HTMLElement | null = null;
 
   // ----------------------------------------------------------- actions
 
@@ -641,7 +668,6 @@ class App {
         key: this.m.key,
         enabledCats: [...this.enabled],
         manual: this.manual,
-        reviewed: this.reviewed,
         omit: this.files.map((_, i) => i).filter((i) => this.reasons[i] !== null),
         prefs: { diffStyle: this.diffStyle },
       };
@@ -677,13 +703,16 @@ class App {
     const fileEl = t.closest<HTMLElement>('.file');
     if (!fileEl) return;
     const v = this.view(Number(fileEl.dataset.i));
+    // Any click in a file makes it current; a click on its header also top-aligns it.
+    const inHeader = !!t.closest('.file-header');
+    this.setCurrent(this.visible.indexOf(v.i));
     const exp = t.closest<HTMLElement>('[data-expand]');
     if (exp) return void v.expand(Number(exp.dataset.row), exp.dataset.expand as 'up' | 'down' | 'all');
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;
-    if (!act) return;
+    if (!act) return void (inHeader && this.jumpTo(v.i));
     if (act === 'review') return this.setReviewed(v.i, (t as HTMLInputElement).checked);
     e.preventDefault();
-    if (act === 'toggle') v.setCollapsed(!v.collapsed);
+    if (act === 'toggle') (v.setCollapsed(!v.collapsed), this.jumpTo(v.i));
     else if (act === 'hide') this.hideFile(v.f.path);
     else if (act === 'top') this.jumpTo(v.i);
     else if (act === 'load') {
@@ -717,7 +746,8 @@ class App {
       : `<li class="menu-note">Nothing hidden by hand. Press <kbd>h</kbd> or use a file's ${svg('eye-closed')} to hide it.</li>`;
     this.paintKeepingMenus(
       slot,
-      this.diffstatHtml() +
+      this.viewedHtml() +
+        this.diffstatHtml() +
         (hidden
           ? `<details class="details-reset details-overlay select-menu hidden-menu" data-menu="hidden"><summary class="btn btn-sm">${fmt(hidden)} hidden <span class="dropdown-caret"></span></summary><div class="select-menu-modal right"><div class="select-menu-header">Hidden by hand</div><ul class="ActionList">${manualRows}</ul></div></details>`
           : ''),
@@ -751,6 +781,20 @@ class App {
     );
     this.renderHeaderStats();
     document.title = `${meta.title} by ${meta.author} · Pull Request #${meta.number} · ${meta.owner}/${meta.repo}`;
+  }
+
+  /** GitHub's "N / M viewed" with a progress ring, over visible files. */
+  viewedHtml(): string {
+    const total = this.visible.length;
+    const done = this.visible.filter((i) => this.isReviewed(i)).length;
+    const r = 6;
+    const c = 2 * Math.PI * r;
+    const dash = total ? (done / total) * c : 0;
+    return (
+      `<span class="viewed-progress${total && done === total ? ' is-done' : ''}" title="${done} of ${total} files reviewed">` +
+      `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="${r}" class="ring-track"/><circle cx="8" cy="8" r="${r}" class="ring-fill" stroke-dasharray="${dash.toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 8 8)"/></svg>` +
+      `<span><b>${fmt(done)}</b> / ${fmt(total)} viewed</span></span>`
+    );
   }
 
   /** "Files changed N +A −D ▪▪▪▪▪" over visible files. Hovering shows the
@@ -797,7 +841,7 @@ class App {
       .join('');
     this.paintKeepingMenus(
       this.tree.extra,
-      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.enabled.size ? ' is-filtering' : ''}" aria-label="Hide files by category" title="Hide files by category">${svg('filter')}</summary><div class="select-menu-modal right filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
+      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.enabled.size ? ' is-filtering' : ''}" aria-label="Hide files by category" title="Hide files by category">${svg('filter')}</summary><div class="select-menu-modal flyout filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
     );
   }
 
