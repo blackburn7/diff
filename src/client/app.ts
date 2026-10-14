@@ -243,6 +243,8 @@ class FileView {
   setCollapsed(c: boolean) {
     this.el.classList.toggle('collapsed', c);
     this.el.querySelector('.js-details-target')!.setAttribute('aria-expanded', String(!c));
+    // Tokens that landed while collapsed were never painted.
+    if (!c && this.tokens) this.app.paintWhenIdle(this);
   }
 }
 
@@ -283,7 +285,7 @@ class App {
     } else {
       this.enabled = new Set(store.get<string[]>(CATS_KEY, DEFAULT_HIDDEN));
     }
-    this.tree = new FileTree((p) => this.jumpTo(this.files.findIndex((f) => f.path === p)));
+    this.tree = new FileTree((p) => this.peekTo(this.files.findIndex((f) => f.path === p)));
     // Bodies render only as they come near the viewport.
     this.io = new IntersectionObserver(
       (entries) => {
@@ -331,6 +333,7 @@ class App {
   /** One shell per file, in one parse. Hiding and showing only flips `hidden`. */
   mountShells() {
     this.io.disconnect();
+    this.peek = null;
     const reasons = this.files.map((f) => this.reasonFor(f));
     this.el.list.innerHTML = this.files.map((f, i) => fileShellHtml(f, i, reasons[i] !== null, this.isReviewed(i))).join('');
     for (const el of this.el.list.children) this.io.observe(el);
@@ -393,6 +396,7 @@ class App {
     if (on) this.reviewed[f.path] = f.hash;
     else delete this.reviewed[f.path];
     store.set(this.reviewedKey, this.reviewed);
+    if (this.peek === i) this.peek = null;
     const v = this.view(i);
     v.el.classList.toggle('is-reviewed', on);
     v.el.querySelector<HTMLInputElement>('input[data-act=review]')!.checked = on;
@@ -541,10 +545,34 @@ class App {
    *  is already on screen. The spacer after the last file makes room. */
   jumpTo(i: number) {
     if (i < 0 || this.reasons[i] !== null) return;
+    this.endPeek(i);
     const v = this.view(i);
     if (!v.rendered) v.render();
     this.holdAt(v.el);
     this.setCurrent(this.visible.indexOf(i));
+  }
+
+  /** A reviewed file opened from the tree. It stays open until another file is picked. */
+  peek: number | null = null;
+
+  /** Jump from the tree: a reviewed file opens until you move on to another one. */
+  peekTo(i: number) {
+    this.jumpTo(i);
+    if (i < 0 || this.reasons[i] !== null || !this.isReviewed(i) || !this.view(i).collapsed) return;
+    this.view(i).setCollapsed(false);
+    this.peek = i;
+  }
+
+  /** Collapse the peeked file again, unless `keep` is it. Holds `keep` in place. */
+  endPeek(keep: number) {
+    const p = this.peek;
+    if (p === null || p === keep) return;
+    this.peek = null;
+    if (!this.isReviewed(p)) return;
+    const el = this.view(keep).el;
+    const top = el.getBoundingClientRect().top;
+    this.view(p).setCollapsed(true);
+    window.scrollBy(0, el.getBoundingClientRect().top - top);
   }
 
   /** The one current file: the tree's active row and the file's outline. */
@@ -697,6 +725,7 @@ class App {
     const v = this.view(Number(fileEl.dataset.i));
     // Any click in a file makes it current; a click on its header also top-aligns it.
     const inHeader = !!t.closest('.file-header');
+    this.endPeek(v.i);
     this.setCurrent(this.visible.indexOf(v.i));
     const exp = t.closest<HTMLElement>('[data-expand]');
     if (exp) return void v.expand(Number(exp.dataset.row), exp.dataset.expand as 'up' | 'down' | 'all');

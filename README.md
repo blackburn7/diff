@@ -37,7 +37,7 @@ the header diffstat only counts visible files. hover it for totals and what's hi
 
 ## reviewed
 
-the reviewed checkbox on a file header, or `v`, marks a file done and collapses it. its tree row fades out, and a folder collapses once everything in it is reviewed. "N / M viewed" in the header tracks progress. marks are keyed by a hash of that file's diff, so if a refresh changes the file, the mark clears and you look at it again.
+the reviewed checkbox on a file header, or `v`, marks a file done and collapses it. its tree row fades out, and a folder collapses once everything in it is reviewed. clicking a reviewed file in the tree opens it, and it collapses again once you move on to another file. "N / M viewed" in the header tracks progress. marks are keyed by a hash of that file's diff, so if a refresh changes the file, the mark clears and you look at it again.
 
 ## export
 
