@@ -127,11 +127,20 @@ export class FileTree {
     for (let d = li.parentElement?.closest<HTMLElement>('li[data-dir]'); d; d = d.parentElement?.closest<HTMLElement>('li[data-dir]')) this.deriveDirReviewed(d);
   }
 
-  /** A folder looks done when every visible file under it is reviewed. */
+  /** A folder is done when every visible file under it is reviewed. It
+   *  collapses when it becomes done, and reopens if it stops being done. */
+  private autoCollapsed = new Set<string>();
   private deriveDirReviewed(li: HTMLElement) {
     const kids = (this.dirOf.get(li) ?? []).filter((k) => !k.classList.contains('is-gone'));
     const done = kids.length > 0 && kids.every((k) => k.classList.contains('is-reviewed'));
-    if (li.classList.contains('is-reviewed') !== done) li.classList.toggle('is-reviewed', done);
+    if (li.classList.contains('is-reviewed') === done) return;
+    li.classList.toggle('is-reviewed', done);
+    const p = li.dataset.dir!;
+    if (done) {
+      this.collapsed.add(p);
+      this.autoCollapsed.add(p);
+    } else if (this.autoCollapsed.delete(p)) this.collapsed.delete(p);
+    li.setAttribute('aria-expanded', String(!this.collapsed.has(p)));
   }
 
   /** Hide the rows of hidden files, and folders with nothing visible left. */

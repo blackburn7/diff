@@ -539,8 +539,6 @@ class App {
     const v = this.view(i);
     if (!v.rendered) v.render();
     this.holdAt(v.el);
-    this.el.list.querySelector('.is-target')?.classList.remove('is-target');
-    v.el.classList.add('is-target');
     this.current = this.visible.indexOf(i);
     this.tree.setActive(this.files[i]!.path);
   }
@@ -678,8 +676,7 @@ class App {
     const t = e.target as HTMLElement;
     const fileEl = t.closest<HTMLElement>('.file');
     if (!fileEl) return;
-    const v = this.views.get(Number(fileEl.dataset.i));
-    if (!v) return;
+    const v = this.view(Number(fileEl.dataset.i));
     const exp = t.closest<HTMLElement>('[data-expand]');
     if (exp) return void v.expand(Number(exp.dataset.row), exp.dataset.expand as 'up' | 'down' | 'all');
     const act = t.closest<HTMLElement>('[data-act]')?.dataset.act;

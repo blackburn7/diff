@@ -45,7 +45,6 @@
   --diff-hunk-num: #b6e3ff;
   --diff-expander-hover: #0969da;
   --diff-empty: #f6f8fa;
-  --row-reviewed: #dafbe166;
   --flash-error-bg: #ffebe9;
   --flash-error-border: #ff818266;
 }
@@ -89,7 +88,6 @@
     --diff-hunk-num: #0c2d6b;
     --diff-expander-hover: #1f6feb;
     --diff-empty: #151b23;
-    --row-reviewed: #2ea0431a;
     --flash-error-bg: #f851491a;
     --flash-error-border: #f8514966;
   }
@@ -242,14 +240,14 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .ActionList-item[aria-expanded="false"] > .ActionList--subGroup { display: none; }
 .ActionList--subGroup { position: relative; }
 .ActionList-item--hasSubItem > .ActionList--subGroup::before { position: absolute; top: 0; bottom: 0; left: calc(6px + (var(--depth) - 1) * 8px + 7.5px); width: 1px; content: ""; background: var(--border-muted); }
-/* Reviewed rows stay but read as done: a faint green tint, a muted name, a check.
-   The selected row keeps its gray so the two never look alike. */
-.reviewed-check { display: none; flex: none; color: var(--fg-success); }
+/* Reviewed rows recede: faded, with a small muted check. Hover and the
+   selected row bring them back to full strength. */
+.reviewed-check { display: none; flex: none; color: var(--fg-muted); }
+.reviewed-check svg { width: 12px; height: 12px; }
 .ActionList-item.is-reviewed > .ActionList-content .reviewed-check { display: flex; }
-.ActionList-item.is-reviewed[data-path] > .ActionList-content { background: var(--row-reviewed); }
-.ActionList-item.is-reviewed > .ActionList-content .ActionList-item-label { color: var(--fg-muted); }
-.ActionList-item.is-reviewed[data-path] > .ActionList-content:hover { background: var(--row-hover); }
-.ActionList-item.is-reviewed.is-active > .ActionList-content { background: var(--row-active); }
+.ActionList-item.is-reviewed > .ActionList-content { opacity: 0.55; }
+.ActionList-item.is-reviewed > .ActionList-content:hover,
+.ActionList-item.is-reviewed.is-active > .ActionList-content { opacity: 1; }
 .status-added { color: var(--fg-success); }
 .status-modified { color: var(--fg-muted); }
 .status-removed { color: var(--fg-danger); }
@@ -261,7 +259,6 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
    style, layout, and paint, and changes inside one file never relayout the
    rest of the page. Each shell carries a size estimate inline. */
 .js-file-content { content-visibility: auto; contain-intrinsic-size: auto 400px; }
-.file.is-target { border-color: var(--fg-accent); box-shadow: 0 0 0 1px var(--fg-accent); }
 /* Pinned flush under the page header. The box clips its corners, so the header
    itself stays square and nothing scrolls into view around it. */
 .file-header { position: sticky; top: calc(var(--hdr-h, 57px) + var(--land-gap)); z-index: 2; display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 2px 8px; background: var(--bg-muted); border-bottom: 1px solid var(--border); }
