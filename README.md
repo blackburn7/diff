@@ -47,6 +47,18 @@ export writes one self-contained `.html` w/ your hides baked in (hidden files' c
 
 `j` / `k` next / prev file · `h` hide · `v` reviewed · `r` refresh
 
+## firefox extension
+
+`extension/` sends github's "files changed" tab here: clicking it, or opening a `…/pull/N/files` link from anywhere, lands on `127.0.0.1:7717` instead. if the server isn't running, github loads as usual. the toolbar button turns it off and on. links to a single commit's diff stay on github.
+
+release firefox only keeps signed extensions, so sign it once as unlisted (free, automatic, not published) with an [AMO API key](https://addons.mozilla.org/developers/addon/api/key/):
+
+```sh
+WEB_EXT_API_KEY=… WEB_EXT_API_SECRET=… bunx web-ext sign -s extension --channel unlisted
+```
+
+then open the `.xpi` from `web-ext-artifacts/` in firefox. bump `version` in the manifest before signing again. for a quick try, `about:debugging` → load temporary add-on → `extension/manifest.json` (gone on restart).
+
 ## develop
 
 ```sh

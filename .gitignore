@@ -10,6 +10,7 @@
 
 # source trees
 !bin/**
+!extension/**
 !src/**
 !test/**
 

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "diff",
+  "version": "0.1.0",
+  "description": "Opens GitHub \"Files changed\" pages in the local diff server.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "diff@tjbai.github.io",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "permissions": ["webRequest", "webRequestBlocking", "storage", "https://github.com/*", "http://127.0.0.1/*"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [{ "matches": ["https://github.com/*"], "js": ["content.js"], "run_at": "document_start" }],
+  "browser_action": { "default_title": "diff: on" }
+}
