@@ -1,5 +1,5 @@
 // GitHub metadata, the blobless bare-clone cache, and the per-PR diff cache.
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { splitPatch, type FileEntry } from './patch.ts';
@@ -169,6 +169,25 @@ export async function writeDiff(owner: string, repo: string, key: string, files:
   await Bun.write(`${base}.json`, JSON.stringify({ files, offsets }));
 }
 
+const DAY = 86_400_000;
+
+/** Drops old cache formats, diffs of superseded heads after a day (long enough
+ *  for tabs still open on them), and the rest after two weeks without a rewrite. */
+async function pruneDiffs(owner: string, repo: string) {
+  const dir = prDir(owner, repo);
+  const current = new Set<string>();
+  for (const name of readdirSync(dir)) {
+    if (name.startsWith('diffs-v') && name !== `diffs-v${CACHE_FORMAT}`) rmSync(join(dir, name), { recursive: true, force: true });
+    if (name.startsWith('pr-')) current.add(((await Bun.file(join(dir, name)).json()) as PrPointer).key.replace('..', '_'));
+  }
+  const diffs = diffDir(owner, repo);
+  for (const name of readdirSync(diffs)) {
+    const path = join(diffs, name);
+    const maxAge = current.has(name.replace(/\.(json|patch)$/, '')) ? 14 * DAY : DAY;
+    if (Date.now() - statSync(path).mtimeMs > maxAge) rmSync(path, { force: true });
+  }
+}
+
 // ---------------------------------------------------------------- load
 
 interface GqlPull {
@@ -196,31 +215,53 @@ async function fetchPull(owner: string, repo: string, n: number): Promise<GqlPul
   return pr;
 }
 
-const memory = new Map<string, PrResult>(); // `${owner}/${repo}#${n}` → latest result
-const diffMemory = new Map<string, { files: FileEntry[]; sections: string[] }>(); // key → diff
+// Everything but the diff itself. These are small, so they are kept for every
+// PR and diff key seen; the diffs live in `diffMemory` (the 8 most recently
+// used) and are read back from disk after eviction.
+type PrHead = Omit<PrResult, 'files' | 'sections'>;
+const heads = new Map<string, PrHead>(); // `${owner}/${repo}#${n}` → latest
+const headsByKey = new Map<string, PrHead>(); // diff key → the load that produced it
+const diffMemory = new Map<string, Diff>(); // key → diff
 const inflight = new Map<string, Promise<PrResult>>();
 
 const prId = (owner: string, repo: string, n: number) => `${owner}/${repo}#${n}`.toLowerCase();
 
-function rememberDiff(key: string, d: { files: FileEntry[]; sections: string[] }) {
+function rememberDiff(key: string, d: Diff) {
   diffMemory.delete(key);
   diffMemory.set(key, d);
   while (diffMemory.size > 8) diffMemory.delete(diffMemory.keys().next().value!);
 }
 
+async function getDiff(owner: string, repo: string, key: string): Promise<Diff | null> {
+  const d = diffMemory.get(key) ?? (await readDiff(owner, repo, key));
+  if (d) rememberDiff(key, d);
+  return d;
+}
+
+function rememberHead(head: PrHead) {
+  heads.set(prId(head.meta.owner, head.meta.repo, head.meta.number), head);
+  headsByKey.set(head.key, head);
+}
+
 /** The last known result without touching the network, or null. */
 export async function cachedPr(owner: string, repo: string, n: number): Promise<PrResult | null> {
-  const id = prId(owner, repo, n);
-  const hit = memory.get(id);
-  if (hit) return hit;
-  const ptr = await readPointer(owner, repo, n);
-  if (!ptr) return null;
-  const diff = diffMemory.get(ptr.key) ?? (await readDiff(owner, repo, ptr.key));
+  let head = heads.get(prId(owner, repo, n));
+  if (!head) {
+    const ptr = await readPointer(owner, repo, n);
+    if (!ptr) return null;
+    head = { ...ptr, timings: { cache: 1 } };
+  }
+  const diff = await getDiff(owner, repo, head.key);
   if (!diff) return null;
-  rememberDiff(ptr.key, diff);
-  const result: PrResult = { ...ptr, ...diff, timings: { cache: 1 } };
-  memory.set(id, result);
-  return result;
+  rememberHead(head);
+  return { ...head, ...diff };
+}
+
+/** A result by its diff key, for patches, hunk expansion, and export. */
+export async function prByKey(key: string): Promise<PrResult | null> {
+  const head = headsByKey.get(key);
+  const diff = head && (await getDiff(head.meta.owner, head.meta.repo, key));
+  return diff ? { ...head!, ...diff } : null;
 }
 
 /** Fetch, merge-base, and diff. Concurrent callers share one run. */
@@ -242,7 +283,7 @@ async function diffAgainst(owner: string, repo: string, dir: string, n: number, 
   const baseSha = (await git(dir, ['merge-base', baseTip, headSha])).trim();
   mark('mergeBase');
   const key = `${baseSha}..${headSha}`;
-  let diff: Diff | null = diffMemory.get(key) ?? (await readDiff(owner, repo, key));
+  let diff = await getDiff(owner, repo, key);
   if (diff) {
     mark('diffCached');
   } else {
@@ -252,7 +293,9 @@ async function diffAgainst(owner: string, repo: string, dir: string, n: number, 
     t = performance.now();
     diff = splitPatch(patch);
     mark('split', t);
-    void writeDiff(owner, repo, key, diff.files, diff.sections).catch((e) => console.error('cache write', e));
+    writeDiff(owner, repo, key, diff.files, diff.sections)
+      .then(() => pruneDiffs(owner, repo))
+      .catch((e) => console.error('cache write', e));
   }
   return { headSha, baseSha, key, diff };
 }
@@ -262,7 +305,7 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
   const timings: Record<string, number> = {};
   const mark = (k: string, since = t0) => (timings[k] = Math.round(performance.now() - since));
 
-  const prior = memory.get(prId(owner, repo, n)) ?? (await readPointer(owner, repo, n));
+  const prior = heads.get(prId(owner, repo, n)) ?? (await readPointer(owner, repo, n));
   const apiP = fetchPull(owner, repo, n).then((r) => (mark('api'), r));
   apiP.catch(() => {});
   const dir = await ensureRepo(owner, repo);
@@ -306,10 +349,10 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
     headRef: api.headRefName,
     commits: api.commits.totalCount,
   };
-  const result: PrResult = { meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, ...d.diff, timings, checkedAt: Date.now() };
-  memory.set(prId(owner, repo, n), result);
-  void writePointer({ meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, checkedAt: result.checkedAt });
-  return result;
+  const head: PrHead = { meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, timings, checkedAt: Date.now() };
+  rememberHead(head);
+  void writePointer({ meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, checkedAt: head.checkedAt });
+  return { ...head, ...d.diff };
 }
 
 /** `git show <rev>:<path>` for hunk expansion. Returns null if the path does not exist. */

@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { bundledLanguages } from 'shiki';
 import { buildClient, type ClientBuild } from './build.ts';
-import { CACHE_ROOT, cachedPr, loadPr, showFile, type PrResult } from './github.ts';
+import { CACHE_ROOT, cachedPr, loadPr, prByKey, showFile, type PrResult } from './github.ts';
 import { exportPage, indexPage, livePage } from './html.ts';
 import type { ExportBundle, ExportRequest, Manifest } from './types.ts';
 import { sourceVersion } from './version.ts';
@@ -34,10 +34,6 @@ function toManifest(r: PrResult, stale = false): Manifest {
   };
 }
 
-// Results by diff key, so patches/export/expansion can find their PR.
-const byKey = new Map<string, PrResult>();
-const remember = (r: PrResult) => (byKey.set(r.key, r), r);
-
 const grammars = new Map<string, Promise<unknown[]>>();
 function grammar(name: string): Promise<unknown[]> {
   let p = grammars.get(name);
@@ -53,7 +49,7 @@ function grammar(name: string): Promise<unknown[]> {
 let workerB64: string | undefined;
 
 async function buildExport(req: ExportRequest): Promise<{ name: string; html: string }> {
-  const r = byKey.get(req.key);
+  const r = await prByKey(req.key);
   if (!r) throw new Error('unknown diff key; refresh and try again');
   const omit = new Set(req.omit);
   const patches = r.sections.map((s, i) => (omit.has(i) ? null : s));
@@ -106,6 +102,8 @@ async function route(req: Request, url: URL): Promise<Response> {
   if ((m = PR_PAGE.exec(path))) {
     return text(livePage({ owner: m[1]!, repo: m[2]!, number: Number(m[3]), css: client.css, hash: client.hash }), 'text/html; charset=utf-8', {
       'cache-control': 'no-store',
+      // A hidden frame of this page would load (and clone) any repo for another site.
+      'content-security-policy': "frame-ancestors 'none'",
     });
   }
   if (path === '/') return text(indexPage({ css: client.css, hash: client.hash }), 'text/html; charset=utf-8');
@@ -120,29 +118,28 @@ async function route(req: Request, url: URL): Promise<Response> {
     const [owner, repo, n] = [m[1]!, m[2]!, Number(m[3])];
     if (url.searchParams.get('cached') === '1') {
       const hit = await cachedPr(owner, repo, n);
-      if (hit) return json(toManifest(remember(hit), true));
+      if (hit) return json(toManifest(hit, true));
     }
-    return json(toManifest(remember(await loadPr(owner, repo, n))));
+    return json(toManifest(await loadPr(owner, repo, n)));
   }
 
   if (path === '/api/warm' && req.method === 'POST') {
     const { owner, repo, number } = (await req.json()) as { owner: string; repo: string; number: number };
     // Load the cached result into memory, and start a fresh fetch in the background.
     const hit = await cachedPr(owner, repo, number);
-    if (hit) remember(hit);
-    loadPr(owner, repo, number).then(remember, (e) => console.error('warm', e));
+    loadPr(owner, repo, number).catch((e) => console.error('warm', e));
     return json({ cached: !!hit });
   }
 
   if (path === '/api/patches' && req.method === 'POST') {
     const { key, ids } = (await req.json()) as { key: string; ids: number[] };
-    const r = byKey.get(key);
+    const r = await prByKey(key);
     if (!r) return json({ error: 'unknown key' }, { status: 404 });
     return json(ids.map((i) => r.sections[i] ?? null));
   }
 
   if (path === '/api/file') {
-    const r = byKey.get(url.searchParams.get('key') ?? '');
+    const r = await prByKey(url.searchParams.get('key') ?? '');
     if (!r) return json({ error: 'unknown key' }, { status: 404 });
     const side = url.searchParams.get('side');
     const rev = side === 'old' ? r.baseSha : r.headSha;
@@ -182,12 +179,28 @@ async function route(req: Request, url: URL): Promise<Response> {
   return new Response('not found', { status: 404 });
 }
 
+// Browsers let any website send requests here, even though they can't read the
+// answers. A foreign Host means DNS rebinding (evil.example resolving to
+// 127.0.0.1), which *would* let the site read them. The API is for this
+// server's own pages and for clients that aren't browsers (the CLI); the
+// extension only needs /health.
+const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+function allowed(req: Request, url: URL): boolean {
+  const host = req.headers.get('host') ?? '';
+  if (!HOSTS.has(host)) return false;
+  if (!url.pathname.startsWith('/api/')) return true;
+  const site = req.headers.get('sec-fetch-site');
+  const origin = req.headers.get('origin');
+  return (!site || site === 'same-origin' || site === 'none') && (!origin || origin === `http://${host}`);
+}
+
 Bun.serve({
   port: PORT,
   hostname: '127.0.0.1',
   idleTimeout: 120,
   async fetch(req) {
     const url = new URL(req.url);
+    if (!allowed(req, url)) return new Response('forbidden', { status: 403 });
     try {
       return await route(req, url);
     } catch (e) {
