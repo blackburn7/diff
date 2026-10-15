@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { bundledLanguages } from 'shiki';
 import { buildClient, type ClientBuild } from './build.ts';
-import { CACHE_ROOT, cachedPr, getDiffByKey, loadPr, showFile, type PrResult } from './github.ts';
+import { CACHE_ROOT, cachedPr, loadPr, showFile, type PrResult } from './github.ts';
 import { exportPage, indexPage, livePage } from './html.ts';
 import type { ExportBundle, ExportRequest, Manifest } from './types.ts';
 import { sourceVersion } from './version.ts';
@@ -54,10 +54,9 @@ let workerB64: string | undefined;
 
 async function buildExport(req: ExportRequest): Promise<{ name: string; html: string }> {
   const r = byKey.get(req.key);
-  const diff = getDiffByKey(req.key);
-  if (!r || !diff) throw new Error('unknown diff key; refresh and try again');
+  if (!r) throw new Error('unknown diff key; refresh and try again');
   const omit = new Set(req.omit);
-  const patches = diff.sections.map((s, i) => (omit.has(i) ? null : s));
+  const patches = r.sections.map((s, i) => (omit.has(i) ? null : s));
   const names = new Set(r.files.filter((f, i) => patches[i] != null && f.lang !== 'text').map((f) => f.lang));
   const langs: Record<string, unknown[]> = {};
   await Promise.all([...names].map(async (n) => (langs[n] = await grammar(n).catch(() => []))));
@@ -137,9 +136,9 @@ async function route(req: Request, url: URL): Promise<Response> {
 
   if (path === '/api/patches' && req.method === 'POST') {
     const { key, ids } = (await req.json()) as { key: string; ids: number[] };
-    const diff = getDiffByKey(key);
-    if (!diff) return json({ error: 'unknown key' }, { status: 404 });
-    return json(ids.map((i) => diff.sections[i] ?? null));
+    const r = byKey.get(key);
+    if (!r) return json({ error: 'unknown key' }, { status: 404 });
+    return json(ids.map((i) => r.sections[i] ?? null));
   }
 
   if (path === '/api/file') {

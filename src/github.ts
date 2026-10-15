@@ -208,10 +208,6 @@ function rememberDiff(key: string, d: { files: FileEntry[]; sections: string[] }
   while (diffMemory.size > 8) diffMemory.delete(diffMemory.keys().next().value!);
 }
 
-export function getDiffByKey(key: string) {
-  return diffMemory.get(key);
-}
-
 /** The last known result without touching the network, or null. */
 export async function cachedPr(owner: string, repo: string, n: number): Promise<PrResult | null> {
   const id = prId(owner, repo, n);
