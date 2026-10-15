@@ -279,7 +279,7 @@ async function run(browser: Browser): Promise<Metrics> {
   out['review.input ms'] = worst;
 
   // Show tests, then hide them again: the biggest hide-state change.
-  await page.locator('summary[aria-label="Hide files by category"]').click();
+  await page.locator('summary[aria-label="Hide files"]').click();
   const [cx, cy] = await center(page.locator('input[data-cat="tests"]'));
   let r = await interaction(page, ['click', 'input', 'change'], () => page.mouse.click(cx, cy));
   out['category.input ms'] = r.input;
@@ -297,7 +297,7 @@ async function run(browser: Browser): Promise<Metrics> {
   await page.locator('input[aria-label="Filter files"]').fill('');
 
   // Unified → split repaints every rendered file.
-  await page.locator('summary[aria-label="Diff view settings"]').click();
+  await page.locator('summary[aria-label="Settings"]').click();
   const [sx, sy] = await center(page.locator('[data-style="split"]'));
   r = await interaction(page, ['click', 'pointerup', 'mouseup'], () => page.mouse.click(sx, sy));
   out['split.input ms'] = r.input;

@@ -17,6 +17,9 @@ export interface PrMeta {
   baseRef: string;
   headRef: string;
   commits: number;
+  viewerDidAuthor?: boolean;
+  /** The commit you last approved at, if your latest review is an approval. */
+  approvedSha?: string;
 }
 
 export interface PrResult {
@@ -199,11 +202,13 @@ interface GqlPull {
   headRefName: string;
   author: { login: string } | null;
   commits: { totalCount: number };
+  viewerDidAuthor: boolean;
+  viewerLatestReview: { state: string; commit: { oid: string } | null } | null;
 }
 
 // GraphQL answers in ~0.4 s where REST `pulls/N` takes ~0.75 s.
 async function fetchPull(owner: string, repo: string, n: number): Promise<GqlPull> {
-  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName author{login} commits{totalCount}}}}`;
+  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName author{login} commits{totalCount} viewerDidAuthor viewerLatestReview{state commit{oid}}}}}`;
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { Authorization: `Bearer ${await token()}`, 'content-type': 'application/json' },
@@ -348,11 +353,34 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
     baseRef: api.baseRefName,
     headRef: api.headRefName,
     commits: api.commits.totalCount,
+    viewerDidAuthor: api.viewerDidAuthor,
+    approvedSha: api.viewerLatestReview?.state === 'APPROVED' ? api.viewerLatestReview.commit?.oid : undefined,
   };
   const head: PrHead = { meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, timings, checkedAt: Date.now() };
   rememberHead(head);
   void writePointer({ meta, key: d.key, baseSha: d.baseSha, headSha: d.headSha, checkedAt: head.checkedAt });
   return { ...head, ...d.diff };
+}
+
+/** Approve the PR at the commit that was reviewed, so a push that lands
+ *  mid-review is not approved unseen. Returns the updated metadata. */
+export async function approvePr(owner: string, repo: string, n: number, headSha: string): Promise<PrMeta> {
+  if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('bad head');
+  const head = heads.get(prId(owner, repo, n));
+  if (!head) throw new Error('unknown PR; reload and try again');
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${n}/reviews`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await token()}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+    body: JSON.stringify({ event: 'APPROVE', commit_id: headSha }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string; errors?: string[] };
+    throw new Error(`GitHub: ${[body.message, ...(body.errors ?? [])].filter(Boolean).join('; ') || res.status}`);
+  }
+  const meta = { ...head.meta, approvedSha: headSha };
+  rememberHead({ ...head, meta });
+  void writePointer({ ...head, meta });
+  return meta;
 }
 
 /** `git show <rev>:<path>` for hunk expansion. Returns null if the path does not exist. */

@@ -24,6 +24,10 @@
   --btn-active: #e6eaef;
   --btn-border: #d1d9e0;
   --btn-shadow: 0 1px 0 0 #1f23280a;
+  --btn-primary-bg: #1f883d;
+  --btn-primary-hover: #1c8139;
+  --btn-primary-border: #1f232826;
+  --approve-fill: #c6f4d0;
   --row-hover: #818b981a;
   --row-active: #818b9826;
   --overlay-shadow: 0 0 0 1px #d1d9e080, 0 6px 12px -3px #25292e0a, 0 6px 18px 0 #25292e1f;
@@ -67,6 +71,10 @@
     --btn-active: #2a313c;
     --btn-border: #3d444d;
     --btn-shadow: 0 0 transparent;
+    --btn-primary-bg: #238636;
+    --btn-primary-hover: #29903b;
+    --btn-primary-border: #f0f6fc1a;
+    --approve-fill: #2ea04366;
     --row-hover: #656c7633;
     --row-active: #656c763d;
     --overlay-shadow: 0 0 0 1px #3d444d, 0 6px 12px -3px #01040966, 0 6px 18px 0 #01040966;
@@ -137,17 +145,9 @@ code, kbd { font-family: var(--fontStack-monospace); }
 .commit-ref.head-ref { flex: 0 1 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
 .pr-meta .snapshot { flex: none; margin-left: 4px; }
 .pr-header-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.pr-dyn { display: flex; align-items: center; gap: 8px; }
-.viewed-progress { display: flex; align-items: center; gap: 6px; margin-right: 8px; font-size: 12px; line-height: 20px; color: var(--fg-muted); white-space: nowrap; }
-.viewed-progress b { color: var(--fg); font-weight: 600; }
-.viewed-progress .ring-track { fill: none; stroke: var(--border); stroke-width: 2; }
-.viewed-progress .ring-fill { fill: none; stroke: var(--fg-accent); stroke-width: 2; stroke-linecap: round; }
-.viewed-progress.is-done .ring-fill { stroke: var(--fg-success); }
 /* Diffstat of the files that are not hidden; hover or focus shows a Primer
    overlay with all-file totals and the hidden breakdown. */
-.pr-diffstat { position: relative; display: flex; align-items: center; gap: 8px; margin-right: 8px; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: default; outline: none; }
-.pr-diffstat .files-changed { font-weight: 600; }
-.pr-diffstat .Counter { display: inline-block; min-width: 20px; margin-left: 4px; padding: 0 6px; font-size: 12px; font-weight: 500; line-height: 18px; color: var(--fg); text-align: center; background: var(--bg-neutral-muted); border-radius: 2em; }
+.pr-diffstat { position: relative; display: flex; align-items: center; gap: 8px; margin-right: 4px; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: default; outline: none; }
 .pr-diffstat .diffstat { font-family: var(--fontStack-sansSerif); font-size: 12px; }
 .diffstat-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 99; display: none; min-width: 300px; padding: 8px 0; font-size: 12px; font-weight: 400; line-height: 20px; color: var(--fg); background: var(--bg); border-radius: 12px; box-shadow: var(--overlay-shadow); }
 .pr-diffstat:hover .diffstat-popover, .pr-diffstat:focus-visible .diffstat-popover { display: block; }
@@ -173,8 +173,6 @@ code, kbd { font-family: var(--fontStack-monospace); }
 .btn-link:hover { text-decoration: underline; }
 .btn-octicon { display: inline-block; padding: 5px; margin-left: 4px; line-height: 1; color: var(--fg-muted); vertical-align: middle; cursor: pointer; background: transparent; border: 0; }
 .btn-octicon:hover { color: var(--fg-accent); }
-.is-refreshing .refresh-icon { animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 .flash { position: relative; padding: 20px 16px; color: var(--fg); border-radius: 6px; border: 1px solid; }
 .flash-error { background: var(--flash-error-bg); border-color: var(--flash-error-border); }
 .flash-container .flash { margin-bottom: 16px; }
@@ -187,6 +185,19 @@ summary.btn::-webkit-details-marker { display: none; }
 .select-menu { position: relative; }
 .select-menu-modal { position: absolute; top: calc(100% + 4px); left: 0; z-index: 99; width: 300px; max-height: 480px; overflow: auto; padding-bottom: 8px; font-size: 12px; color: var(--fg); background: var(--bg); border-radius: 12px; box-shadow: var(--overlay-shadow); }
 .settings-menu { width: 200px; }
+.menu-heading { display: flex; justify-content: space-between; padding: 4px 16px; font-weight: 600; color: var(--fg-muted); }
+.select-menu-modal .ActionList { padding-top: 8px; }
+/* Approve doubles as review progress: green fills in from the left as files
+   are marked reviewed, and the button turns solid once all are. */
+.approve { gap: 6px; color: var(--fg); background: linear-gradient(90deg, var(--approve-fill) var(--p), var(--btn-bg) var(--p)); }
+.approve:hover { background: linear-gradient(90deg, var(--approve-fill) var(--p), var(--btn-hover) var(--p)); }
+.approve-count { font-variant-numeric: tabular-nums; color: var(--fg-muted); }
+.approve.is-done { color: #fff; background: var(--btn-primary-bg); border-color: var(--btn-primary-border); box-shadow: none; }
+.approve.is-done:hover { background: var(--btn-primary-hover); }
+.approve.is-done .approve-count { color: #ffffffb3; }
+.approve:disabled { opacity: 0.6; }
+.approve.is-static, .approve.is-approved { cursor: default; }
+.approve.is-approved .octicon { color: var(--fg-success); }
 .select-menu-header { padding: 8px 16px; margin-bottom: 8px; font-weight: 600; border-bottom: 1px solid var(--border-muted); }
 .select-menu-modal .ActionList { list-style: none; margin: 0; padding: 0; }
 .ActionListItem { display: flex; align-items: center; gap: 8px; width: calc(100% - 16px); margin: 0 8px; padding: 6px 8px; font-size: 14px; line-height: 20px; color: var(--fg); text-align: left; background: none; border: 0; border-radius: 6px; cursor: pointer; }
@@ -194,7 +205,6 @@ summary.btn::-webkit-details-marker { display: none; }
 .ActionListItem-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-family: var(--fontStack-monospace); font-size: 12px; }
 .ActionListItem .check { width: 16px; height: 16px; flex: none; }
 .ActionList-sectionDivider { height: 1px; margin: 8px 0; background: var(--border-muted); list-style: none; }
-.unhide-all { margin: 0 16px; font-size: 14px; }
 .menu-note { padding: 4px 16px; color: var(--fg-muted); font-size: 12px; }
 .menu-note .octicon { vertical-align: text-bottom; }
 .select-menu-modal.right { right: 0; left: auto; }

@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { bundledLanguages } from 'shiki';
 import { buildClient, type ClientBuild } from './build.ts';
-import { CACHE_ROOT, cachedPr, loadPr, prByKey, showFile, type PrResult } from './github.ts';
+import { approvePr, CACHE_ROOT, cachedPr, loadPr, prByKey, showFile, type PrResult } from './github.ts';
 import { exportPage, indexPage, livePage } from './html.ts';
 import type { ExportBundle, ExportRequest, Manifest } from './types.ts';
 import { sourceVersion } from './version.ts';
@@ -129,6 +129,11 @@ async function route(req: Request, url: URL): Promise<Response> {
     const hit = await cachedPr(owner, repo, number);
     loadPr(owner, repo, number).catch((e) => console.error('warm', e));
     return json({ cached: !!hit });
+  }
+
+  if (path === '/api/approve' && req.method === 'POST') {
+    const { owner, repo, number, headSha } = (await req.json()) as { owner: string; repo: string; number: number; headSha: string };
+    return json(await approvePr(owner, repo, number, headSha));
   }
 
   if (path === '/api/patches' && req.method === 'POST') {

@@ -39,8 +39,8 @@ declare global {
 const PREFS_KEY = 'prv:prefs:v2';
 /** v2: Agent config is hidden by default too; selections saved under the old
  *  key (Geld's default, Tests only) are ignored. */
-const CATS_KEY = 'prv:cats:v3';
-const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents', 'docs'];
+const CATS_KEY = 'prv:cats:v4';
+const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents', 'docs', 'manual'];
 /** Patches bigger than this start behind "Load diff", like GitHub's large diffs. */
 const LARGE_PATCH = 150_000;
 /** How much patch text to fetch ahead of need, at most (see `App.prefetch`). */
@@ -119,6 +119,11 @@ async function highlightWorkers(): Promise<Worker[]> {
 }
 
 /** GitHub renders `code` spans in PR titles. */
+/** Throws a non-2xx response's `{ error }`. */
+async function ok(res: Response) {
+  if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? String(res.status));
+}
+
 function titleHtml(t: string): string {
   return t
     .split(/(`[^`]+`)/)
@@ -328,10 +333,11 @@ class App {
   constructor(readonly src: Source) {
     this.diffStyle = store.get<{ diffStyle?: DiffStyle }>(PREFS_KEY, {}).diffStyle ?? src.bundle?.prefs.diffStyle ?? 'unified';
     if (src.mode === 'export') {
-      this.enabled = new Set(src.bundle!.enabledCats);
+      // Exports leave hand-hidden files out, so they stay hidden there.
+      this.enabled = new Set([...src.bundle!.enabledCats, 'manual']);
       this.manual = { ...src.bundle!.manual };
     } else {
-      this.enabled = new Set(store.get<string[]>(CATS_KEY, DEFAULT_HIDDEN));
+      this.enabled = new Set(store.get<string[]>(CATS_KEY, [...store.get<string[]>('prv:cats:v3', DEFAULT_HIDDEN), 'manual']));
     }
     this.tree = new FileTree((p) => this.peekTo(this.files.findIndex((f) => f.path === p)));
     // Bodies render only as they come near the viewport.
@@ -404,33 +410,29 @@ class App {
   reasonFor(f: FileEntry): string | null {
     const m = this.manualFor(f.path);
     if (m === 'show') return null;
-    if (m === 'hide') return 'manual';
+    if (m === 'hide' && this.enabled.has('manual')) return 'manual';
     return f.cats.find((c) => this.enabled.has(c)) ?? null;
   }
 
   saveManual() {
     if (this.live) store.set(this.manualKey, this.manual);
+    this.renderFilterMenu();
   }
 
+  /** `h` / the eye: hide a shown file by hand. With Manual off, hand-hidden
+   *  files are shown, and this unhides them instead. */
   hideFile(path: string) {
+    const was = this.manual[path];
     delete this.manual[path];
     const f = this.files.find((x) => x.path === path);
-    if (f && this.reasonFor(f) === null) this.manual[path] = 'hide';
+    if (f && was !== 'hide' && this.reasonFor(f) === null) {
+      this.manual[path] = 'hide';
+      if (!this.enabled.has('manual')) return (this.saveManual(), this.toggleCategory('manual'));
+    }
     this.saveManual();
     this.update();
   }
 
-  unhide(key: string) {
-    delete this.manual[key];
-    this.saveManual();
-    this.update();
-  }
-
-  unhideAll() {
-    for (const [k, v] of Object.entries(this.manual)) if (v === 'hide') delete this.manual[k];
-    this.saveManual();
-    this.update();
-  }
 
   isReviewed(i: number): boolean {
     const f = this.files[i]!;
@@ -450,8 +452,8 @@ class App {
     v.el.querySelector<HTMLInputElement>('input[data-act=review]')!.checked = on;
     v.setCollapsed(on);
     this.tree.setReviewed(i, on);
-    const viewed = this.el.header.querySelector('.viewed-progress');
-    if (viewed) viewed.outerHTML = this.viewedHtml();
+    const approve = this.el.header.querySelector('.approve');
+    if (approve) approve.outerHTML = this.approveHtml();
     if (!on) return;
     const at = this.visible.indexOf(i);
     const next = [...this.visible.slice(at + 1), ...this.visible.slice(0, at)].find((j) => !this.isReviewed(j));
@@ -588,7 +590,7 @@ class App {
     });
     this.tree.setHidden((i) => this.reasons[i] !== null);
     for (const input of this.tree.extra.querySelectorAll<HTMLInputElement>('input[data-cat]')) input.checked = this.enabled.has(input.dataset.cat!);
-    this.tree.extra.querySelector('summary')?.classList.toggle('is-filtering', this.enabled.size > 0);
+    this.tree.extra.querySelector('summary')?.classList.toggle('is-filtering', this.visible.length < this.files.length);
     this.renderHeaderStats();
   }
 
@@ -731,12 +733,11 @@ class App {
   async refresh() {
     if (!this.live || this.refreshing) return;
     this.refreshing = true;
-    this.el.root.classList.add('is-refreshing');
     const t = performance.now();
     try {
       const { owner, repo, number } = this.m.meta;
       const res = await fetch(`/api/pr/${owner}/${repo}/${number}`);
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? res.statusText);
+      await ok(res);
       const m = (await res.json()) as Manifest;
       const changed = m.key !== this.m.key;
       if (changed) {
@@ -756,7 +757,6 @@ class App {
       this.flash(`Refresh failed: ${e instanceof Error ? e.message : e}`);
     } finally {
       this.refreshing = false;
-      this.el.root.classList.remove('is-refreshing');
     }
   }
 
@@ -770,13 +770,13 @@ class App {
       const req: ExportRequest = {
         key: this.m.key,
         enabledCats: [...this.enabled],
-        manual: this.manual,
+        manual: this.enabled.has('manual') ? this.manual : {},
         omit: this.files.map((_, i) => i).filter((i) => this.reasons[i] !== null),
         prefs: { diffStyle: this.diffStyle },
       };
       const t = performance.now();
       const res = await fetch('/api/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
-      if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? String(res.status));
+      await ok(res);
       const blob = await res.blob();
       const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'diff-export.html';
       const a = h('a', { href: URL.createObjectURL(blob), download: name });
@@ -834,27 +834,21 @@ class App {
     for (const m of open) el.querySelector(`details[data-menu="${m}"]`)?.setAttribute('open', '');
   }
 
-  /** The parts of the header that follow the hide state: diffstat and "N hidden". */
+  /** The header's right side: diffstat, the gear (view, export), and
+   *  Approve. It follows the hide state, so it repaints on its own. */
   renderHeaderStats() {
-    const slot = this.el.header.querySelector<HTMLElement>('.pr-dyn');
+    const slot = this.el.header.querySelector<HTMLElement>('.pr-header-actions');
     if (!slot) return;
-    const hidden = this.files.length - this.visible.length;
-    const manualKeys = Object.entries(this.manual)
-      .filter(([, v]) => v === 'hide')
-      .map(([k]) => k);
-    const manualRows = manualKeys.length
-      ? manualKeys
-          .map((k) => `<li class="ActionListItem"><span class="ActionListItem-label" title="${esc(k)}"><bdi>${esc(k)}</bdi></span><button type="button" class="btn-link" data-unhide="${esc(k)}">Unhide</button></li>`)
-          .join('') +
-        `<li class="ActionList-sectionDivider" role="presentation"></li><li><button type="button" class="btn-link unhide-all" data-unhide-all>Unhide all</button></li>`
-      : `<li class="menu-note">Nothing hidden by hand. Press <kbd>h</kbd> or use a file's ${icon('eye-closed')} to hide it.</li>`;
+    const radio = (v: DiffStyle, label: string) =>
+      `<button type="button" class="ActionListItem" role="menuitemradio" aria-checked="${this.diffStyle === v}" data-style="${v}"><span class="check">${this.diffStyle === v ? icon('check') : ''}</span>${label}</button>`;
     this.paintKeepingMenus(
       slot,
-      this.viewedHtml() +
-        this.diffstatHtml() +
-        (hidden
-          ? `<details class="details-reset details-overlay select-menu hidden-menu" data-menu="hidden"><summary class="btn btn-sm">${fmt(hidden)} hidden <span class="dropdown-caret"></span></summary><div class="select-menu-modal right"><div class="select-menu-header">Hidden by hand</div><ul class="ActionList">${manualRows}</ul></div></details>`
-          : ''),
+      this.diffstatHtml() +
+        `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Settings" title="Settings">${icon('gear')}</summary><div class="select-menu-modal right settings-menu"><div class="ActionList">` +
+        `<div class="menu-heading">View</div>${radio('unified', 'Unified')}${radio('split', 'Split')}` +
+        (this.live ? `<div class="ActionList-sectionDivider" role="presentation"></div><button type="button" class="ActionListItem" data-act="export"><span class="check">${icon('download')}</span>Export .html</button>` : '') +
+        `</div></div></details>` +
+        this.approveHtml(),
     );
   }
 
@@ -862,11 +856,6 @@ class App {
     const { meta } = this.m;
     const repo = `https://github.com/${esc(meta.owner)}/${esc(meta.repo)}`;
     const verb = meta.state === 'merged' ? 'merged' : 'wants to merge';
-    const radio = (v: DiffStyle, label: string) =>
-      `<button type="button" class="ActionListItem" role="menuitemradio" aria-checked="${this.diffStyle === v}" data-style="${v}"><span class="check">${this.diffStyle === v ? icon('check') : ''}</span>${label}</button>`;
-    const actions = this.live
-      ? `<button type="button" class="btn btn-sm" data-act="refresh" title="Re-fetch and re-diff (r)">${icon('sync', 'refresh-icon')} Refresh</button><button type="button" class="btn btn-sm" data-act="export" title="Download this view as one .html file">${icon('download')} Export</button>`
-      : '';
     const exportedAt = this.live ? null : new Date(this.src.bundle!.exportedAt);
     const snapshot = exportedAt
       ? `<span class="snapshot" title="Exported from diff ${esc(exportedAt.toLocaleString())}">· snapshot ${esc(exportedAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>`
@@ -878,30 +867,47 @@ class App {
         `<a class="author" href="https://github.com/${esc(meta.author)}" target="_blank" rel="noreferrer">${esc(meta.author)}</a><span>${verb} ${fmt(meta.commits)} commit${meta.commits === 1 ? '' : 's'} into</span>` +
         `<a class="commit-ref base-ref" href="${repo}/tree/${esc(meta.baseRef)}" target="_blank" rel="noreferrer" title="${esc(meta.baseRef)}">${esc(meta.baseRef)}</a><span>from</span>` +
         `<a class="commit-ref head-ref" href="${repo}/tree/${esc(meta.headRef)}" target="_blank" rel="noreferrer" title="${esc(meta.headRef)}">${esc(meta.headRef)}</a>${snapshot}</div>` +
-        `<div class="pr-header-actions"><div class="pr-dyn"></div>` +
-        `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Diff view settings" title="Diff view">${icon('gear')}</summary><div class="select-menu-modal right settings-menu"><div class="select-menu-header">Diff view</div><div class="ActionList">${radio('unified', 'Unified')}${radio('split', 'Split')}</div></div></details>` +
-        actions +
-        `</div></div>`,
+        `<div class="pr-header-actions"></div></div>`,
     );
     this.renderHeaderStats();
     document.title = `${meta.title} by ${meta.author} · Pull Request #${meta.number} · ${meta.owner}/${meta.repo}`;
   }
 
-  /** GitHub's "N / M viewed" with a progress ring, over visible files. */
-  viewedHtml(): string {
+  /** Review progress and the primary action in one: it fills as files are
+   *  marked reviewed and turns solid once all shown files are. Without
+   *  Approve (your own PR, a closed one, an export) it is just the progress. */
+  approveHtml(): string {
+    const { meta, headSha } = this.m;
     const total = this.visible.length;
     const done = this.visible.filter((i) => this.isReviewed(i)).length;
-    const r = 6;
-    const c = 2 * Math.PI * r;
-    const dash = total ? (done / total) * c : 0;
-    return (
-      `<span class="viewed-progress${total && done === total ? ' is-done' : ''}" title="${done} of ${total} files reviewed">` +
-      `<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="${r}" class="ring-track"/><circle cx="8" cy="8" r="${r}" class="ring-fill" stroke-dasharray="${dash.toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 8 8)"/></svg>` +
-      `<span><b>${fmt(done)}</b> / ${fmt(total)} viewed</span></span>`
-    );
+    const all = total > 0 && done === total;
+    const attrs = `style="--p:${total ? (done / total) * 100 : 0}%" title="${done} of ${total} shown files reviewed`;
+    const count = `<span class="approve-count">${fmt(done)}/${fmt(total)}</span>`;
+    if (!this.live || meta.viewerDidAuthor || meta.state === 'merged' || meta.state === 'closed')
+      return `<span class="btn btn-sm approve is-static${all ? ' is-done' : ''}" ${attrs}">${count} reviewed</span>`;
+    if (meta.approvedSha === headSha) return `<span class="btn btn-sm approve is-approved" ${attrs}">${icon('check')} Approved ${count}</span>`;
+    return `<button type="button" class="btn btn-sm approve${all ? ' is-done' : ''}" data-act="approve" ${attrs}; approves ${headSha.slice(0, 7)}, the commit shown">Approve ${count}</button>`;
   }
 
-  /** "Files changed N +A −D ▪▪▪▪▪" over visible files. Hovering shows the
+  async approve(btn: HTMLButtonElement) {
+    btn.disabled = true;
+    try {
+      const { owner, repo, number } = this.m.meta;
+      const res = await fetch('/api/approve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ owner, repo, number, headSha: this.m.headSha }),
+      });
+      await ok(res);
+      this.m = { ...this.m, meta: (await res.json()) as Manifest['meta'] };
+      this.flash(null);
+    } catch (e) {
+      this.flash(`Approve failed: ${e instanceof Error ? e.message : e}`);
+    }
+    this.renderHeader();
+  }
+
+  /** "+A −D" over shown files. Hovering shows the
    *  all-file totals and what is hidden, by category and by hand. */
   diffstatHtml(): string {
     const sum = (idx: number[]): [number, number] => {
@@ -923,21 +929,22 @@ class App {
     const pop =
       `<div class="diffstat-popover" role="tooltip">` +
       row('Shown', this.visible) +
-      (hiddenIdx.length ? row('Hidden', hiddenIdx) + reasons.map((r) => row(r === 'manual' ? 'Hidden by hand' : esc(CAT_TITLE.get(r) ?? r), byReason.get(r)!, ' ds-sub')).join('') : '') +
+      (hiddenIdx.length ? row('Hidden', hiddenIdx) + reasons.map((r) => row(r === 'manual' ? 'Manual' : esc(CAT_TITLE.get(r) ?? r), byReason.get(r)!, ' ds-sub')).join('') : '') +
       `<div class="ds-divider"></div>` +
       row('All files', this.files.map((_, i) => i), ' ds-total') +
       `</div>`;
     return (
-      `<div class="pr-diffstat" tabindex="0"><span class="files-changed">Files changed<span class="Counter">${fmt(this.visible.length)}</span></span>` +
-      `<span class="diffstat">${stat(adds, dels)} ${diffstatBlocks(adds, dels)}</span>${pop}</div>`
+      `<div class="pr-diffstat" tabindex="0"><span class="diffstat">${stat(adds, dels)}</span>${pop}</div>`
     );
   }
 
-  /** The Geld categories, as a checkbox menu behind the tree's filter button. */
+  /** Hand-hidden files and the Geld categories, as a checkbox menu behind the tree's eye button. */
   renderFilterMenu() {
     const counts = new Map<string, number>();
     for (const f of this.files) for (const c of f.cats) counts.set(c, (counts.get(c) ?? 0) + 1);
-    const rows = CATEGORIES.filter((c) => counts.get(c.id))
+    counts.set('manual', this.files.filter((f) => this.manualFor(f.path) === 'hide').length);
+    const rows = [{ id: 'manual', title: 'Manual', description: 'Files you hid with h or a file\'s eye button' }, ...CATEGORIES]
+      .filter((c) => counts.get(c.id))
       .map(
         (c) =>
           `<label class="ActionListItem" title="${esc(c.description)}"><input type="checkbox" data-cat="${c.id}"${this.enabled.has(c.id) ? ' checked' : ''}><span class="ActionListItem-text">${esc(c.title)}</span><span class="ActionListItem-count">${fmt(counts.get(c.id)!)}</span></label>`,
@@ -945,7 +952,7 @@ class App {
       .join('');
     this.paintKeepingMenus(
       this.tree.extra,
-      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.enabled.size ? ' is-filtering' : ''}" aria-label="Hide files by category" title="Hide files by category">${icon('filter')}</summary><div class="select-menu-modal flyout filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
+      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.visible.length < this.files.length ? ' is-filtering' : ''}" aria-label="Hide files" title="Hide files">${icon('eye-closed')}</summary><div class="select-menu-modal flyout filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
     );
   }
 
@@ -958,18 +965,13 @@ class App {
 
   onChromeClick(e: MouseEvent) {
     const t = e.target as HTMLElement;
-    const un = t.closest<HTMLElement>('[data-unhide]');
-    if (un) return this.unhide(un.dataset.unhide!);
-    if (t.closest('[data-unhide-all]')) return this.unhideAll();
-    const style = t.closest<HTMLElement>('[data-style]');
-    if (style) {
-      style.closest('details')?.removeAttribute('open');
-      return this.setDiffStyle(style.dataset.style as DiffStyle);
-    }
-    const btn = t.closest<HTMLButtonElement>('[data-act]');
-    const act = btn?.dataset.act;
-    if (act === 'refresh') void this.refresh();
-    else if (act === 'export') void this.exportHtml(btn!);
+    const btn = t.closest<HTMLButtonElement>('[data-style],[data-act]');
+    if (!btn) return;
+    btn.closest('details')?.removeAttribute('open');
+    const { style, act } = btn.dataset;
+    if (style) this.setDiffStyle(style as DiffStyle);
+    else if (act === 'approve') void this.approve(btn);
+    else if (act === 'export') void this.exportHtml(btn);
   }
 
   // ----------------------------------------------------------- mount
@@ -1041,7 +1043,6 @@ class App {
       if (t && (t.isContentEditable || /^(TEXTAREA|SELECT)$/.test(t.tagName) || (t instanceof HTMLInputElement && t.type !== 'checkbox'))) return;
       if (e.key === 'j') this.go(1);
       else if (e.key === 'k') this.go(-1);
-      else if (e.key === 'r') void this.refresh();
       else if (e.key === 'h') {
         if (this.visible.length) this.hideFile(this.files[this.visible[this.currentIndex()]!]!.path);
       } else if (e.key === 'v') {
