@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { pathOrder, splitPatch } from '../src/patch.ts';
+import { buildRows, parsePatch, patchDocs } from '../src/client/diff.ts';
 
 test('pathOrder matches git and GitHub: plain byte order of the path', () => {
   const paths = ['a/b/c.ts', 'a/b.ts', 'B.md', 'a/b10.ts', 'a/b2.ts', 'a.ts'];
@@ -38,4 +39,24 @@ test('splitPatch keeps each section with its own stats and kinds', () => {
   expect(ws).toMatchObject({ status: 'modified', additions: 1, deletions: 1, kinds: ['whitespace'] });
   expect(sections[2]!.startsWith('diff --git a/src/b.ts')).toBe(true);
   expect(sections[2]!.includes('a/src/a.ts')).toBe(false);
+});
+
+test('patchDocs highlights each hunk on its own so a cut-off string cannot leak', () => {
+  const patch = [
+    '@@ -1,2 +1,2 @@',
+    ' def f():',
+    '     """starts here, ends past the hunk',
+    '@@ -10,1 +10,2 @@',
+    '+x = 1',
+    ' y = 2',
+    '@@ -20,0 +21,1 @@',
+    '+z = 3',
+  ].join('\n');
+  const rows = buildRows(parsePatch(patch), false, false);
+  const d = patchDocs(rows);
+  expect(d.old).toEqual(['def f():\n    """starts here, ends past the hunk', 'y = 2']);
+  expect(d.new).toEqual(['def f():\n    """starts here, ends past the hunk', 'x = 1\ny = 2', 'z = 3']);
+  const lines = rows.flatMap((r) => (r.type === 'line' ? [r.line] : []));
+  expect(lines.map((l) => d.oldIdx.get(l) ?? -1)).toEqual([0, 1, -1, 2, -1]);
+  expect(lines.map((l) => d.newIdx.get(l) ?? -1)).toEqual([0, 1, 2, 3, 4]);
 });

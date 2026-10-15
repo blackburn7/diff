@@ -319,25 +319,37 @@ export function colgroup(mode: 'split' | 'unified', maxLine: number): string {
   return mode === 'split' ? `<colgroup><col width="${w}"><col><col width="${w}"><col></colgroup>` : `<colgroup><col width="${w}"><col width="${w}"><col></colgroup>`;
 }
 
-/** Old and new documents to highlight when only the patch is known. */
-export function patchDocs(rows: Row[]): { old: string; new: string; oldIdx: Map<Line, number>; newIdx: Map<Line, number> } {
-  const o: string[] = [];
-  const n: string[] = [];
+/**
+ * Old and new documents to highlight when only the patch is known: one per
+ * hunk, so a string or comment cut off at a hunk's edge does not run on into
+ * the next hunk. Line indexes count across all of a side's documents.
+ */
+export function patchDocs(rows: Row[]): { old: string[]; new: string[]; oldIdx: Map<Line, number>; newIdx: Map<Line, number> } {
+  const o: string[][] = [];
+  const n: string[][] = [];
   const oldIdx = new Map<Line, number>();
   const newIdx = new Map<Line, number>();
+  let oi = 0;
+  let ni = 0;
   for (const r of rows) {
-    if (r.type !== 'line') continue;
+    if (r.type !== 'line') {
+      o.push([]);
+      n.push([]);
+      continue;
+    }
     const l = r.line;
     if (l.k !== '+') {
-      oldIdx.set(l, o.length);
-      o.push(l.t);
+      oldIdx.set(l, oi++);
+      o[o.length - 1]!.push(l.t);
     }
     if (l.k !== '-') {
-      newIdx.set(l, n.length);
-      n.push(l.t);
+      newIdx.set(l, ni++);
+      n[n.length - 1]!.push(l.t);
     }
   }
-  return { old: o.join('\n'), new: n.join('\n'), oldIdx, newIdx };
+  // An empty document still tokenizes to one line, which would shift indexes.
+  const docs = (hunks: string[][]) => hunks.filter((h) => h.length).map((h) => h.join('\n'));
+  return { old: docs(o), new: docs(n), oldIdx, newIdx };
 }
 
 export function diffstatBlocks(adds: number, dels: number, added = false): string {

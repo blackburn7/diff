@@ -196,24 +196,28 @@ class FileView {
   async highlight() {
     const f = this.f;
     if (f.lang === 'text') return;
-    let docs: [string, string];
+    // Old-side documents first, then new-side ones.
+    let docs: string[];
+    let nOld: number;
     let oldIdx: (l: Line) => number;
     let newIdx: (l: Line) => number;
     if (this.full) {
       docs = [this.full.old.join('\n'), this.full.new.join('\n')];
+      nOld = 1;
       oldIdx = (l) => l.o - 1;
       newIdx = (l) => l.n - 1;
     } else {
       const d = patchDocs(this.rows);
-      docs = [d.old, d.new];
+      docs = [...d.old, ...d.new];
+      nOld = d.old.length;
       oldIdx = (l) => d.oldIdx.get(l) ?? -1;
       newIdx = (l) => d.newIdx.get(l) ?? -1;
     }
-    if (docs[0].length + docs[1].length > 2_000_000) return;
+    if (docs.reduce((a, s) => a + s.length, 0) > 2_000_000) return;
     const full = this.full;
     const out = await this.app.hl.tokenize(f.lang, docs);
     if (!out || this.full !== full) return;
-    this.tokens = { old: out[0]!, new: out[1]!, oldIdx, newIdx };
+    this.tokens = { old: out.slice(0, nOld).flat(), new: out.slice(nOld).flat(), oldIdx, newIdx };
     if (!this.collapsed) this.app.paintWhenIdle(this);
   }
 
