@@ -1,3 +1,5 @@
+<img src="src/logo.svg" width="48" alt="">
+
 # diff
 
 a local, private, very fast github "files changed" view. point it at any PR, including private repos and PRs too big for github's diff API (it refuses anything over 300 files).

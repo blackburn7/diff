@@ -8,7 +8,7 @@
     "style.css gzip bytes": 10400
   },
   "perf": {
-    "bytes.html": 39800,
+    "bytes.html": 40600,
     "bytes.manifest": 245900,
     "load.firstPaint ms": 130,
     "load.fcp ms": 45,

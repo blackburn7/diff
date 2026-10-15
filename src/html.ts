@@ -1,4 +1,8 @@
 // The HTML shell shared by the live page and exported files.
+import { readFileSync } from 'node:fs';
+
+// Inlined so exports carry the favicon too.
+const FAVICON = `data:image/svg+xml,${encodeURIComponent(readFileSync(new URL('logo.svg', import.meta.url), 'utf8').trim())}`;
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -25,6 +29,7 @@ function shell(o: ShellOptions): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>${esc(o.title)}</title>
+<link rel="icon" href="${FAVICON}">
 <script>${inlineScript(o.boot)}</script>
 ${o.head ?? ''}<style>${o.css}</style>
 </head>
