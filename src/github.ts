@@ -127,7 +127,7 @@ const CACHE_FORMAT = 4;
 const diffDir = (owner: string, repo: string) => join(prDir(owner, repo), `diffs-v${CACHE_FORMAT}`);
 const diffPath = (owner: string, repo: string, key: string) => join(diffDir(owner, repo), key.replace('..', '_'));
 
-interface PrPointer {
+export interface PrPointer {
   meta: PrMeta;
   key: string;
   baseSha: string;
@@ -140,7 +140,7 @@ async function readPointer(owner: string, repo: string, n: number): Promise<PrPo
   return (await f.exists()) ? ((await f.json()) as PrPointer) : null;
 }
 
-async function writePointer(p: PrPointer): Promise<void> {
+export async function writePointer(p: PrPointer): Promise<void> {
   const dir = prDir(p.meta.owner, p.meta.repo);
   mkdirSync(dir, { recursive: true });
   await Bun.write(join(dir, `pr-${p.meta.number}.json`), JSON.stringify(p));
@@ -160,7 +160,7 @@ async function readDiff(owner: string, repo: string, key: string) {
   return { files: index.files, sections };
 }
 
-async function writeDiff(owner: string, repo: string, key: string, files: FileEntry[], sections: string[]) {
+export async function writeDiff(owner: string, repo: string, key: string, files: FileEntry[], sections: string[]) {
   const base = diffPath(owner, repo, key);
   mkdirSync(diffDir(owner, repo), { recursive: true });
   const offsets = [0];

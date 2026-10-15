@@ -8,10 +8,14 @@
   "scripts": {
     "server": "bun src/server.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "perf": "bun checks/perf.ts",
+    "check": "tsc --noEmit && bun test && bun checks/bundle.ts && bun checks/perf.ts",
+    "ratchet": "bun checks/bundle.ts --ratchet && bun checks/perf.ts --ratchet"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "playwright-core": "1.64.1"
   },
   "peerDependencies": {
     "typescript": "^7"

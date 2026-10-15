@@ -1,0 +1,36 @@
+{
+  "bundle": {
+    "app.js bytes": 55600,
+    "app.js gzip bytes": 19500,
+    "hl-worker.js bytes": 196700,
+    "hl-worker.js gzip bytes": 60800,
+    "style.css bytes": 39100,
+    "style.css gzip bytes": 10400
+  },
+  "perf": {
+    "bytes.html": 39800,
+    "bytes.manifest": 245900,
+    "load.firstPaint ms": 130,
+    "load.fcp ms": 45,
+    "load.highlighted ms": 165,
+    "load.settled ms": 130,
+    "load.blocking ms": 10,
+    "load.longestFrame ms": 75,
+    "load.domNodes": 19700,
+    "scroll.longestFrame ms": 35,
+    "scroll.blocking ms": 10,
+    "scroll.blankFrames %": 2,
+    "teleport.toContent ms": 90,
+    "teleport.blocking ms": 10,
+    "next.input ms": 60,
+    "next.blocking ms": 10,
+    "treeJump.input ms": 40,
+    "treeJump.blocking ms": 35,
+    "review.input ms": 30,
+    "category.input ms": 40,
+    "category.blocking ms": 10,
+    "treeFilter.input ms": 30,
+    "split.input ms": 30,
+    "split.blocking ms": 75
+  }
+}

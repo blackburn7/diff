@@ -1,7 +1,7 @@
 // GitHub's "Files changed" file tree (ActionList--tree markup). It is built
 // once from every file; hiding flips rows, and folders left without a visible
 // file go too.
-import { esc, svg } from './diff.ts';
+import { esc, icon } from './diff.ts';
 import type { IconName } from './icons.ts';
 
 export interface TreeFile {
@@ -62,7 +62,7 @@ export class FileTree {
   constructor(private onSelect: (path: string) => void) {
     this.el = document.createElement('div');
     this.el.className = 'file-tree-panel';
-    this.el.innerHTML = `<div class="file-tree-filter"><div class="filter-input"><span class="filter-icon">${svg('search')}</span><input type="text" class="form-control" placeholder="Filter files…" aria-label="Filter files"></div><div class="filter-extra"></div></div><nav aria-label="File Tree Navigation" class="file-tree-nav"></nav>`;
+    this.el.innerHTML = `<div class="file-tree-filter"><div class="filter-input"><span class="filter-icon">${icon('search')}</span><input type="text" class="form-control" placeholder="Filter files…" aria-label="Filter files"></div><div class="filter-extra"></div></div><nav aria-label="File Tree Navigation" class="file-tree-nav"></nav>`;
     this.input = this.el.querySelector('input')!;
     this.extra = this.el.querySelector('.filter-extra')!;
     this.list = this.el.querySelector('nav')!;
@@ -91,7 +91,7 @@ export class FileTree {
         if ('status' in c) {
           const [ic, label] = STATUS[c.status];
           const name = c.path.slice(c.path.lastIndexOf('/') + 1);
-          html += `<li class="ActionList-item${sub ? ' ActionList-item--subItem' : ''}${c.path === this.active ? ' is-active' : ''}${c.reviewed ? ' is-reviewed' : ''}" role="treeitem" data-path="${esc(c.path)}" data-i="${c.i}" style="--depth:${depth}"><a class="ActionList-content" href="#" tabindex="-1"><span class="ActionList-item-visual--leading" title="${label}">${svg(ic, `status-${label}`)}</span><span class="ActionList-item-label" title="${esc(c.path)}">${esc(name)}</span><span class="reviewed-check" title="Reviewed">${svg('check')}</span></a></li>`;
+          html += `<li class="ActionList-item${sub ? ' ActionList-item--subItem' : ''}${c.path === this.active ? ' is-active' : ''}${c.reviewed ? ' is-reviewed' : ''}" role="treeitem" data-path="${esc(c.path)}" data-i="${c.i}" style="--depth:${depth}"><a class="ActionList-content" href="#" tabindex="-1"><span class="ActionList-item-visual--leading" title="${label}">${icon(ic, `status-${label}`)}</span><span class="ActionList-item-label" title="${esc(c.path)}">${esc(name)}</span><span class="reviewed-check" title="Reviewed">${icon('check')}</span></a></li>`;
           continue;
         }
         // Collapse chains of directories that hold only one directory.
@@ -102,7 +102,7 @@ export class FileTree {
           label += `/${dir.name}`;
         }
         const open = !this.collapsed.has(dir.path);
-        html += `<li class="ActionList-item ActionList-item--hasSubItem${sub ? ' ActionList-item--subItem' : ''}" role="treeitem" aria-expanded="${open}" data-dir="${esc(dir.path)}" style="--depth:${depth}"><button class="ActionList-content" type="button" tabindex="-1"><span class="ActionList-item-action--leading">${svg('chevron-down', 'collapse-icon')}</span><span class="ActionList-item-visual--leading">${svg('file-directory-open-fill', 'icon-directory dir-open')}${svg('file-directory-fill', 'icon-directory dir-closed')}</span><span class="ActionList-item-label">${esc(label)}</span><span class="reviewed-check" title="All reviewed">${svg('check')}</span></button><ul class="ActionList ActionList--subGroup" role="group">`;
+        html += `<li class="ActionList-item ActionList-item--hasSubItem${sub ? ' ActionList-item--subItem' : ''}" role="treeitem" aria-expanded="${open}" data-dir="${esc(dir.path)}" style="--depth:${depth}"><button class="ActionList-content" type="button" tabindex="-1"><span class="ActionList-item-action--leading">${icon('chevron-down', 'collapse-icon')}</span><span class="ActionList-item-visual--leading">${icon('file-directory-open-fill', 'icon-directory dir-open')}${icon('file-directory-fill', 'icon-directory dir-closed')}</span><span class="ActionList-item-label">${esc(label)}</span><span class="reviewed-check" title="All reviewed">${icon('check')}</span></button><ul class="ActionList ActionList--subGroup" role="group">`;
         walk(dir, depth + 1, true);
         html += '</ul></li>';
       }

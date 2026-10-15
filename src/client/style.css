@@ -108,7 +108,7 @@ a { color: var(--fg-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { font: inherit; }
 code, kbd { font-family: var(--fontStack-monospace); }
-.octicon { display: inline-block; vertical-align: text-bottom; fill: currentColor; overflow: visible; flex: none; }
+.octicon { display: inline-block; flex: none; width: 16px; height: 16px; vertical-align: text-bottom; background: currentColor; mask: var(--icon) center / 100% 100% no-repeat; }
 .color-fg-success { color: var(--fg-success); }
 .color-fg-danger { color: var(--fg-danger); }
 .Link--primary { color: var(--fg) !important; }
@@ -233,6 +233,8 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .file-tree-nav:hover { scrollbar-color: var(--border) transparent; }
 .ActionList--tree, .ActionList--subGroup { margin: 0; padding: 0; list-style: none; }
 .ActionList-item { position: relative; list-style: none; border-radius: 6px; }
+/* File rows are one 28px line; offscreen ones skip layout. */
+.ActionList-item:not(.ActionList-item--hasSubItem) { content-visibility: auto; contain-intrinsic-size: auto 28px; }
 .ActionList-item[hidden], .ActionList-item.is-gone { display: none; }
 .ActionList-content { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 4px 8px 4px calc(6px + (var(--depth) - 1) * 8px); font-size: 14px; line-height: 20px; color: var(--fg); text-align: left; text-decoration: none; cursor: pointer; background: none; border: 0; border-radius: 6px; }
 .ActionList-item-action--leading { margin-right: -4px; }
@@ -253,7 +255,7 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 /* Reviewed rows recede: faded, with a small muted check. Hover and the
    selected row bring them back to full strength. */
 .reviewed-check { display: none; flex: none; color: var(--fg-muted); }
-.reviewed-check svg { width: 12px; height: 12px; }
+.reviewed-check .octicon { width: 12px; height: 12px; }
 .ActionList-item.is-reviewed > .ActionList-content .reviewed-check { display: flex; }
 .ActionList-item.is-reviewed > .ActionList-content { opacity: 0.55; }
 .ActionList-item.is-reviewed > .ActionList-content:hover,
@@ -288,17 +290,19 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .file.collapsed .file-header::before, .file.collapsed .file-header::after { bottom: -1px; }
 .file.collapsed .file-header::after { border-bottom: var(--edge); border-radius: 6px; box-shadow: none; }
 .file.collapsed .js-file-content { display: none; }
-.Details-content--hidden { display: none; }
-.file.collapsed .Details-content--hidden { display: inline-block; }
-.file.collapsed .Details-content--shown { display: none; }
+.file.collapsed .toggle-chevron { transform: rotate(-90deg); }
 .file-info { display: flex; align-items: center; min-width: 0; flex: auto; font-size: 12px; line-height: 28px; }
 .file-info .js-details-target { width: 22px; margin-left: 0; padding: 5px 3px; }
 .diffstat { display: inline-flex; flex: none; align-items: center; gap: 4px; font-family: var(--fontStack-monospace); font-size: 12px; font-weight: 600; color: var(--fg-muted); white-space: nowrap; }
-.diffstat-block-added, .diffstat-block-deleted, .diffstat-block-neutral { display: inline-block; width: 8px; height: 8px; margin-left: 1px; }
-.diffstat-blocks { display: inline-flex; }
-.diffstat-block-added { background: var(--diffstat-added); }
-.diffstat-block-deleted { background: var(--diffstat-deleted); }
-.diffstat-block-neutral { background: var(--bg-neutral-muted); }
+/* Five 8px blocks, 1px apart: --g green, then --r red, then neutral. One
+   element instead of five, since every file header has one. */
+.diffstat-blocks {
+  --a: calc(var(--g) * 9px);
+  --b: calc((var(--g) + var(--r)) * 9px);
+  display: inline-block; flex: none; width: 45px; height: 8px;
+  background: linear-gradient(90deg, var(--diffstat-added) var(--a), var(--diffstat-deleted) var(--a) var(--b), var(--bg-neutral-muted) var(--b));
+  mask: repeating-linear-gradient(90deg, transparent 0 1px, #000 1px 9px);
+}
 .Truncate { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; margin-left: 4px; }
 .Truncate-text, .ActionListItem-label { direction: rtl; text-align: left; }
 .Truncate-text > bdi, .ActionListItem-label > bdi { direction: ltr; unicode-bidi: isolate; }
@@ -316,6 +320,7 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 
 /* ---------------------------------------------------------------- diff table */
 .diff-table-wrap { overflow: hidden; }
+.diff-segment { content-visibility: auto; }
 .diff-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; tab-size: 8; }
 .diff-table td { padding: 0; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; }
 .blob-num { width: 1%; min-width: 50px; padding: 0 10px !important; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; color: var(--fg-muted); text-align: right; white-space: nowrap; vertical-align: top; cursor: pointer; user-select: none; }
@@ -344,9 +349,6 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .blob-code-deletion .x { background: var(--diff-del-word); }
 .x-first { border-top-left-radius: .2em; border-bottom-left-radius: .2em; }
 .x-last { border-top-right-radius: .2em; border-bottom-right-radius: .2em; }
-.blob-code-inner span[style] { color: var(--l); }
-@media (prefers-color-scheme: dark) { .blob-code-inner span[style] { color: var(--d); } }
-.pl-i { font-style: italic; }
 
 /* ---------------------------------------------------------------- index */
 .index { max-width: 640px; margin: 15vh auto; padding: 0 24px; }

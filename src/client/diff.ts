@@ -1,6 +1,6 @@
 // Patch model and GitHub-style diff table rendering (classic `.diff-table`
 // markup: blob-num / blob-code cells, `@@` hunk rows with gutter expanders).
-import { ICONS, type IconName } from './icons.ts';
+import type { IconName } from './icons.ts';
 
 export type Kind = ' ' | '+' | '-';
 export interface Line {
@@ -220,15 +220,37 @@ export interface Tokens {
 const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ESC[c]!);
 
-export function svg(name: IconName, cls = ''): string {
-  return `<svg class="octicon octicon-${name}${cls ? ` ${cls}` : ''}" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="${ICONS[name]}"></path></svg>`;
+/** An octicon: one empty element, drawn by a CSS mask (see build.ts), so a
+ *  page of a thousand file headers is not a thousand inline SVGs. */
+export function icon(name: IconName, cls = ''): string {
+  return `<i class="octicon octicon-${name}${cls ? ` ${cls}` : ''}" aria-hidden="true"></i>`;
+}
+
+/** Syntax colors as classes, one per (light, dark, italic), each rule added
+ *  to the page on first use. A class lets the browser share one computed
+ *  style across every token of that color; an inline style on each of a
+ *  big diff's ten thousand spans cannot. */
+const tokClasses = new Map<string, string>();
+let tokSheet: CSSStyleSheet | undefined;
+function tokClass(t: Tok): string {
+  const key = `${t[1]} ${t[2]} ${t[3]}`;
+  let c = tokClasses.get(key);
+  if (c) return c;
+  c = `tk${tokClasses.size}`;
+  tokClasses.set(key, c);
+  if (!tokSheet) {
+    const el = document.createElement('style');
+    document.head.append(el);
+    tokSheet = el.sheet!;
+  }
+  tokSheet.insertRule(`.${c}{color:${t[1]}${t[3] ? ';font-style:italic' : ''}}`, tokSheet.cssRules.length);
+  tokSheet.insertRule(`@media (prefers-color-scheme: dark){.${c}{color:${t[2]}}}`, tokSheet.cssRules.length);
+  return c;
 }
 
 function lineHtml(text: string, toks: Tok[] | undefined, x: [number, number][] | undefined): string {
   if (!toks || toks.reduce((a, t) => a + t[0].length, 0) !== text.length) toks = [[text, '', '', 0]];
-  if (!x?.length) {
-    return toks.map((t) => (t[1] ? `<span style="--l:${t[1]};--d:${t[2]}"${t[3] ? ' class="pl-i"' : ''}>${esc(t[0])}</span>` : esc(t[0]))).join('');
-  }
+  if (!x?.length) return toks.map((t) => (t[1] ? `<span class="${tokClass(t)}">${esc(t[0])}</span>` : esc(t[0]))).join('');
   let out = '';
   let pos = 0;
   let ri = 0;
@@ -241,9 +263,8 @@ function lineHtml(text: string, toks: Tok[] | undefined, x: [number, number][] |
       const inR = r !== undefined && r[0] <= abs;
       const end = Math.min(t[0].length, (inR ? r![1] : r ? r[0] : Infinity) - pos);
       const piece = t[0].slice(s, end);
-      const cls = inR ? `x${abs === r![0] ? ' x-first' : ''}${pos + end === r![1] ? ' x-last' : ''}` : '';
-      const style = t[1] ? ` style="--l:${t[1]};--d:${t[2]}"` : '';
-      out += cls || style ? `<span${cls ? ` class="${cls}${t[3] ? ' pl-i' : ''}"` : t[3] ? ' class="pl-i"' : ''}${style}>${esc(piece)}</span>` : esc(piece);
+      const cls = [inR ? `x${abs === r![0] ? ' x-first' : ''}${pos + end === r![1] ? ' x-last' : ''}` : '', t[1] ? tokClass(t) : ''].filter(Boolean).join(' ');
+      out += cls ? `<span class="${cls}">${esc(piece)}</span>` : esc(piece);
       s = end;
     }
     pos += t[0].length;
@@ -264,8 +285,8 @@ const EMPTY = '<td class="blob-num blob-num-empty empty-cell"></td><td class="bl
 function expanders(row: Extract<Row, { type: 'hunk' | 'tail' }>, i: number): string {
   const g = row.gap;
   if (!g) return '<span class="blob-num-dots">…</span>';
-  const btn = (dir: string, icon: IconName, label: string) =>
-    `<button type="button" class="directional-expander" data-expand="${dir}" data-row="${i}" aria-label="${label}" title="${label}">${svg(icon)}</button>`;
+  const btn = (dir: string, name: IconName, label: string) =>
+    `<button type="button" class="directional-expander" data-expand="${dir}" data-row="${i}" aria-label="${label}" title="${label}">${icon(name)}</button>`;
   if (row.type === 'tail') return btn('down', 'fold-down', 'Expand Down');
   if (row.first) return btn('up', 'fold-up', 'Expand Up');
   const count = g.oldTo - g.oldFrom + 1;
@@ -273,24 +294,25 @@ function expanders(row: Extract<Row, { type: 'hunk' | 'tail' }>, i: number): str
   return btn('down', 'fold-down', 'Expand Down') + btn('up', 'fold-up', 'Expand Up');
 }
 
-export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | null): string {
-  let out = '';
+/** One `<tr>` per display row. */
+export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | null): string[] {
+  const out: string[] = [];
   const nums = mode === 'split' ? 1 : 2;
   const codeSpan = mode === 'split' ? 3 : 1;
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
     if (r.type !== 'line') {
       const twin = r.gap && r.type === 'hunk' && !r.first && r.gap.oldTo - r.gap.oldFrom + 1 > EXPAND_STEP;
-      out += `<tr class="js-expandable-line${twin ? ' is-twin' : ''}"><td class="blob-num blob-num-expandable" colspan="${nums}">${expanders(r, i)}</td><td class="blob-code blob-code-inner blob-code-hunk" colspan="${codeSpan}">${r.type === 'hunk' ? esc(r.header) : ''}</td></tr>`;
+      out.push(`<tr class="js-expandable-line${twin ? ' is-twin' : ''}"><td class="blob-num blob-num-expandable" colspan="${nums}">${expanders(r, i)}</td><td class="blob-code blob-code-inner blob-code-hunk" colspan="${codeSpan}">${r.type === 'hunk' ? esc(r.header) : ''}</td></tr>`);
       continue;
     }
     const l = r.line;
     if (mode === 'unified') {
-      out += `<tr>${l.o ? numCell(l.k, l.o) : '<td class="blob-num blob-num-addition empty-num"></td>'}${l.n ? numCell(l.k, l.n) : '<td class="blob-num blob-num-deletion empty-num"></td>'}${codeCell(l, tk)}</tr>`;
+      out.push(`<tr>${l.o ? numCell(l.k, l.o) : '<td class="blob-num blob-num-addition empty-num"></td>'}${l.n ? numCell(l.k, l.n) : '<td class="blob-num blob-num-deletion empty-num"></td>'}${codeCell(l, tk)}</tr>`);
       continue;
     }
     if (l.k === ' ') {
-      out += `<tr>${numCell(' ', l.o)}${codeCell(l, tk, 'left')}${numCell(' ', l.n)}${codeCell(l, tk, 'right')}</tr>`;
+      out.push(`<tr>${numCell(' ', l.o)}${codeCell(l, tk, 'left')}${numCell(' ', l.n)}${codeCell(l, tk, 'right')}</tr>`);
       continue;
     }
     // A change block: deletions then additions, paired line by line.
@@ -306,7 +328,7 @@ export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | 
     for (let p = 0; p < Math.max(dels.length, adds.length); p++) {
       const d = dels[p];
       const a = adds[p];
-      out += `<tr>${d ? numCell('-', d.o) + codeCell(d, tk, 'left') : EMPTY}${a ? numCell('+', a.n) + codeCell(a, tk, 'right') : EMPTY}</tr>`;
+      out.push(`<tr>${d ? numCell('-', d.o) + codeCell(d, tk, 'left') : EMPTY}${a ? numCell('+', a.n) + codeCell(a, tk, 'right') : EMPTY}</tr>`);
     }
     i = j - 1;
   }
@@ -359,9 +381,7 @@ export function diffstatBlocks(adds: number, dels: number, added = false): strin
   const slots = Math.min(total, 5);
   const g = total ? Math.floor((adds / total) * slots) : 0;
   const r = total ? Math.floor((dels / total) * slots) : 0;
-  let out = '';
-  for (let i = 0; i < 5; i++) out += `<span class="diffstat-block-${i < g ? 'added' : i < g + r ? 'deleted' : 'neutral'}"></span>`;
-  return `<span class="diffstat-blocks">${out}</span>`;
+  return `<span class="diffstat-blocks" style="--g:${g};--r:${r}"></span>`;
 }
 
 export { esc };

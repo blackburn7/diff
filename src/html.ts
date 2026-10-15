@@ -37,7 +37,9 @@ ${o.body}
 
 export function livePage(p: { owner: string; repo: string; number: number; css: string; hash: string }): string {
   const api = `/api/pr/${p.owner}/${p.repo}/${p.number}?cached=1`;
-  const boot = `window.__prvBoot={mode:'live',owner:${JSON.stringify(p.owner)},repo:${JSON.stringify(p.repo)},number:${p.number},manifest:fetch(${JSON.stringify(api)}).then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t)})})};`;
+  // The manifest request and the highlighter workers start before the app script loads.
+  const worker = JSON.stringify(`/hl-worker.js?v=${p.hash}`);
+  const boot = `window.__prvBoot={mode:'live',owner:${JSON.stringify(p.owner)},repo:${JSON.stringify(p.repo)},number:${p.number},manifest:fetch(${JSON.stringify(api)}).then(function(r){return r.ok?r.json():r.text().then(function(t){throw new Error(t)})}),workers:[new Worker(${worker}),new Worker(${worker})]};`;
   const src = `/app.js?v=${p.hash}`;
   return shell({
     title: `${p.owner}/${p.repo}#${p.number} · diff`,

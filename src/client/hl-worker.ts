@@ -6,11 +6,13 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import githubDark from '@shikijs/themes/github-dark-default';
 import githubLight from '@shikijs/themes/github-light-default';
 
+/** Tokenize `docs`; or, without `docs`, only load the grammar ahead of time. */
 interface Req {
-  id: number;
+  id?: number;
   lang: string;
-  grammar?: unknown[];
-  docs: string[];
+  /** The grammar, or the URL to fetch it from. */
+  grammar?: unknown[] | string;
+  docs?: string[];
 }
 
 const hlP = createHighlighterCore({
@@ -19,11 +21,25 @@ const hlP = createHighlighterCore({
   engine: createJavaScriptRegexEngine({ forgiving: true }),
 });
 
+// Grammars by language, loaded or loading. A request that arrives while its
+// grammar is still being fetched waits for it.
+const loading = new Map<string, Promise<void>>();
+
 self.onmessage = async (e: MessageEvent<Req>) => {
   const { id, lang, grammar, docs } = e.data;
   try {
     const hl = await hlP;
-    if (grammar?.length && !hl.getLoadedLanguages().includes(lang)) await hl.loadLanguage(...(grammar as never[]));
+    if (grammar?.length && !loading.has(lang)) {
+      loading.set(
+        lang,
+        (async () => {
+          const g = typeof grammar === 'string' ? await (await fetch(grammar)).json() : grammar;
+          await hl.loadLanguage(...(g as never[]));
+        })(),
+      );
+    }
+    await loading.get(lang);
+    if (!docs) return;
     const out = docs.map((doc) =>
       hl
         .codeToTokens(doc, {

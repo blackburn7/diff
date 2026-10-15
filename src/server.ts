@@ -114,7 +114,7 @@ async function route(req: Request, url: URL): Promise<Response> {
     return text(client.js, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
   }
   if (path === '/hl-worker.js') {
-    return text(client.worker, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=86400' });
+    return text(client.worker, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
   }
 
   if ((m = PR_API.exec(path))) {

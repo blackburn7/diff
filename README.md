@@ -63,6 +63,9 @@ then open the `.xpi` from `web-ext-artifacts/` in firefox. bump `version` in the
 
 ```sh
 bun install
-bun test
-bunx tsc --noEmit
+bun run check     # types, tests, then the bundle and perf budgets
 ```
+
+`checks/budget.json` holds hard budgets, and they only go down. `checks/bundle.ts` checks the size of the app, the worker, and the stylesheet. `checks/perf.ts` serves a synthetic 1,471-file PR (`checks/fixture.ts`, same bytes every run) on its own port and cache, drives headless Firefox through first load, scrolling, a scrollbar drag, `j`, tree jumps, reviewing, category toggles, the tree filter, and unified → split, and compares the median of 5 runs. Timings come from Event Timing (input → next paint) and a frame recorder (time past 50 ms per frame). If one trips, make it faster; don't raise the number. When a change makes things faster, `bun run ratchet` lowers the budgets to the new numbers plus headroom.
+
+`bun checks/perf.ts owner/repo#N` runs the same scenarios against a real PR from `~/.cache/prv` (open it with `diff` once first) and only reports. The first run needs Firefox for Playwright: `bunx playwright-core install firefox`.

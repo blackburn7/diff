@@ -6,21 +6,21 @@ import {
   diffstatBlocks,
   esc,
   expand,
+  icon,
   parsePatch,
   patchDocs,
   renderRows,
-  svg,
   type Line,
   type Parsed,
   type Row,
   type Tokens,
 } from './diff.ts';
 import { extractEmbedded, fmt, gunzipBase64, h } from './dom.ts';
-import { Highlighter } from './highlight.ts';
+import { Highlighter, type Grammar } from './highlight.ts';
 import { FileTree } from './tree.ts';
 
 type Boot =
-  | { mode: 'live'; owner: string; repo: string; number: number; manifest: Promise<Manifest> }
+  | { mode: 'live'; owner: string; repo: string; number: number; manifest: Promise<Manifest>; workers?: Worker[] }
   | { mode: 'export' }
   | { mode: 'index' };
 type DiffStyle = 'split' | 'unified';
@@ -43,6 +43,10 @@ const CATS_KEY = 'prv:cats:v3';
 const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents', 'docs'];
 /** Patches bigger than this start behind "Load diff", like GitHub's large diffs. */
 const LARGE_PATCH = 150_000;
+/** How much patch text to fetch ahead of need, at most (see `App.prefetch`). */
+const PREFETCH_BYTES = 32_000_000;
+/** Rows per table in a long diff (see `FileView.paint`). */
+const SEGMENT = 100;
 const CAT_TITLE = new Map(CATEGORIES.map((c) => [c.id as string, c.title]));
 
 const store = {
@@ -91,8 +95,27 @@ async function highlightWorkerUrl(): Promise<string> {
   // file:// pages cannot start workers from disk; a blob URL works everywhere.
   workerUrl = embedded
     ? URL.createObjectURL(new Blob([await gunzipBase64(embedded)], { type: 'text/javascript' }))
-    : '/hl-worker.js';
+    : `/hl-worker.js${new URL(import.meta.url).search}`;
   return workerUrl;
+}
+
+/** Two highlighter workers. The live page starts them in its <head>, so Shiki
+ *  loads while the manifest and this script do; take those the first time. */
+async function highlightWorkers(): Promise<Worker[]> {
+  const boot = window.__prvBoot;
+  if (boot.mode === 'live' && boot.workers) {
+    const w = boot.workers;
+    boot.workers = undefined;
+    return w;
+  }
+  const url = await highlightWorkerUrl();
+  const out: Worker[] = [];
+  for (let i = 0; i < 2; i++) {
+    try {
+      out.push(new Worker(url));
+    } catch {}
+  }
+  return out;
 }
 
 /** GitHub renders `code` spans in PR titles. */
@@ -105,24 +128,35 @@ function titleHtml(t: string): string {
 
 // ------------------------------------------------------------- one file
 
-/** One file's box: header plus an empty body, sized for content-visibility
- *  (`auto` makes the browser remember the real height once it renders). */
+/** A rendered body's height, roughly: GitHub's 20px rows, capped. */
+const fileEstimate = (f: FileEntry) => Math.min(40000, (f.additions + f.deletions) * 20 + 60);
+
+/** One file's box, empty and sized for content-visibility (`auto` makes the
+ *  browser remember the real height once it renders). Its header and body
+ *  fill in when it nears the viewport: the browser builds layout objects for
+ *  every element not `display: none`, so a 2,000-file PR mounts 2,000
+ *  elements, not 40,000. */
 function fileShellHtml(f: FileEntry, i: number, hidden: boolean, reviewed: boolean): string {
+  return `<div class="file${reviewed ? ' collapsed is-reviewed' : ''}" data-i="${i}"${hidden ? ' hidden' : ''} style="contain-intrinsic-size:auto ${reviewed ? 38 : fileEstimate(f) + 38}px"></div>`;
+}
+
+/** A file's header and its empty body. */
+function fileInnerHtml(f: FileEntry, reviewed: boolean): string {
   const binary = f.kinds?.includes('binary');
   const name = f.prevPath ? `${f.prevPath} → ${f.path}` : f.path;
   const stat =
     (f.additions ? `<span class="color-fg-success">+${fmt(f.additions)}</span>` : '') +
     (f.deletions ? `<span class="color-fg-danger">−${fmt(f.deletions)}</span>` : '');
-  const est = Math.min(40000, (f.additions + f.deletions) * 20 + 60);
+  const est = fileEstimate(f);
   return (
-    `<div class="file${reviewed ? ' collapsed is-reviewed' : ''}" data-i="${i}"${hidden ? ' hidden' : ''} style="contain-intrinsic-size:auto ${est + 38}px"><div class="file-header"><div class="file-info">` +
-    `<button type="button" class="btn-octicon js-details-target" data-act="toggle" aria-label="Toggle diff contents" aria-expanded="${!reviewed}">${svg('chevron-down', 'Details-content--shown')}${svg('chevron-right', 'Details-content--hidden')}</button>` +
+    `<div class="file-header"><div class="file-info">` +
+    `<button type="button" class="btn-octicon js-details-target" data-act="toggle" aria-label="Toggle diff contents" aria-expanded="${!reviewed}">${icon('chevron-down', 'toggle-chevron')}</button>` +
     `<span class="Truncate"><a class="Link--primary Truncate-text" title="${esc(name)}" href="#" data-act="top"><bdi>${esc(name)}</bdi></a></span>` +
     `</div><div class="file-actions">` +
     `<span class="diffstat">${binary ? 'BIN' : stat} ${diffstatBlocks(f.additions, f.deletions, f.status === 'added')}</span>` +
     `<label class="btn btn-sm reviewed-toggle" title="Mark reviewed (v)"><input type="checkbox" data-act="review"${reviewed ? ' checked' : ''}> Reviewed</label>` +
-    `<button type="button" class="btn-octicon" data-act="hide" aria-label="Hide file" title="Hide file (h)">${svg('eye-closed')}</button></div></div>` +
-    `<div class="js-file-content" style="contain-intrinsic-size:auto ${est}px"></div></div>`
+    `<button type="button" class="btn-octicon" data-act="hide" aria-label="Hide file" title="Hide file (h)">${icon('eye-closed')}</button></div></div>` +
+    `<div class="js-file-content" style="contain-intrinsic-size:auto ${est}px"></div>`
   );
 }
 
@@ -140,6 +174,7 @@ class FileView {
     readonly i: number,
     readonly el: HTMLElement,
   ) {
+    if (!el.firstChild) el.innerHTML = fileInnerHtml(this.f, app.isReviewed(i));
     this.body = el.lastElementChild as HTMLElement;
   }
 
@@ -190,7 +225,16 @@ class FileView {
     const mode = this.app.diffStyle;
     let max = 0;
     for (const r of this.rows) if (r.type === 'line') max = Math.max(max, r.line.o, r.line.n);
-    this.body.innerHTML = `<div class="diff-table-wrap"><table class="diff-table js-diff-table tab-size${mode === 'split' ? ' file-diff-split' : ''}" data-tab-size="8">${colgroup(mode, max)}<tbody>${renderRows(this.rows, mode, this.tokens)}</tbody></table></div>`;
+    const trs = renderRows(this.rows, mode, this.tokens);
+    const table = (rows: string[]) =>
+      `<table class="diff-table js-diff-table tab-size${mode === 'split' ? ' file-diff-split' : ''}" data-tab-size="8">${colgroup(mode, max)}<tbody>${rows.join('')}</tbody></table>`;
+    // A long diff is a stack of tables, each skipped by content-visibility
+    // while off screen, so landing on a 3,000-line file styles and lays out
+    // the hundred rows you see, not all of them.
+    let html = '';
+    if (trs.length <= SEGMENT) html = table(trs);
+    else for (let s = 0; s < trs.length; s += SEGMENT) html += `<div class="diff-segment" style="contain-intrinsic-size:auto ${Math.min(SEGMENT, trs.length - s) * 20}px">${table(trs.slice(s, s + SEGMENT))}</div>`;
+    this.body.innerHTML = `<div class="diff-table-wrap">${html}</div>`;
   }
 
   async highlight() {
@@ -438,6 +482,28 @@ class App {
     missing.forEach((i, j) => this.src.patches.set(i, out[j] ?? null));
   }
 
+  /** Fetch the rest of the shown files' patches while the page is idle, so
+   *  a jump or a fast scroll renders without waiting on the server. */
+  async prefetch() {
+    const key = this.m.key;
+    let left = PREFETCH_BYTES;
+    while (left > 0) {
+      await new Promise((r) => requestIdleCallback(r, { timeout: 500 }));
+      if (key !== this.m.key) return;
+      const batch: number[] = [];
+      let bytes = 0;
+      for (const i of this.visible) {
+        const size = this.files[i]!.size;
+        if (this.src.patches.has(i) || size > LARGE_PATCH) continue;
+        batch.push(i);
+        if ((bytes += size) > 1_000_000) break;
+      }
+      if (!batch.length) return;
+      left -= bytes;
+      await this.loadPatches(batch).catch(() => {});
+    }
+  }
+
   /** Batch patch requests from files about to render. */
   private wantPatch = new Set<number>();
   requestPatch(i: number) {
@@ -469,6 +535,14 @@ class App {
     this.renderScheduled = true;
     const step = () => {
       const t = performance.now();
+      // Files on screen first, then outward: after a long jump the queue
+      // also holds everything in the observer's margin above the viewport.
+      const away = (v: FileView) => {
+        const r = v.el.getBoundingClientRect();
+        return r.bottom < 0 ? -r.bottom : Math.max(0, r.top - innerHeight);
+      };
+      const order = new Map(this.renderQueue.map((v) => [v, away(v)]));
+      this.renderQueue.sort((a, b) => order.get(a)! - order.get(b)!);
       while (this.renderQueue.length && performance.now() - t < 8) {
         const next = this.renderQueue.shift()! as FileView & { repaint?: boolean };
         if (next.repaint) {
@@ -488,10 +562,15 @@ class App {
     return r.text();
   }
 
+  /** File `i`'s box, filled in or not. Enough for geometry. */
+  shell(i: number): HTMLElement {
+    return this.el.list.children[i] as HTMLElement;
+  }
+
   view(i: number): FileView {
     let v = this.views.get(i);
     if (!v) {
-      v = new FileView(this, i, this.el.list.children[i] as HTMLElement);
+      v = new FileView(this, i, this.shell(i));
       this.views.set(i, v);
     }
     return v;
@@ -503,10 +582,9 @@ class App {
     const prev = this.reasons;
     this.reasons = this.files.map((f) => this.reasonFor(f));
     this.visible = [];
-    const list = this.el.list.children;
     this.reasons.forEach((r, i) => {
       if (r === null) this.visible.push(i);
-      if ((prev[i] === null) !== (r === null) || prev.length === 0) (list[i] as HTMLElement).hidden = r !== null;
+      if ((prev[i] === null) !== (r === null) || prev.length === 0) this.shell(i).hidden = r !== null;
     });
     this.tree.setHidden((i) => this.reasons[i] !== null);
     for (const input of this.tree.extra.querySelectorAll<HTMLInputElement>('input[data-cat]')) input.checked = this.enabled.has(input.dataset.cat!);
@@ -625,7 +703,7 @@ class App {
     let ans = 0;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (this.view(this.visible[mid]!).el.getBoundingClientRect().top <= top) {
+      if (this.shell(this.visible[mid]!).getBoundingClientRect().top <= top) {
         ans = mid;
         lo = mid + 1;
       } else hi = mid - 1;
@@ -637,7 +715,7 @@ class App {
     if (!this.visible.length) return;
     const cur = this.currentIndex();
     let next = cur + delta;
-    if (delta < 0 && this.view(this.visible[cur]!).el.getBoundingClientRect().top < this.landTop() - 4) next = cur;
+    if (delta < 0 && this.shell(this.visible[cur]!).getBoundingClientRect().top < this.landTop() - 4) next = cur;
     next = Math.max(0, Math.min(this.visible.length - 1, next));
     this.jumpTo(this.visible[next]!);
   }
@@ -667,6 +745,7 @@ class App {
         this.mountShells();
         this.update();
         this.renderHeader();
+        void this.prefetch();
       } else if (JSON.stringify(m.meta) !== JSON.stringify(this.m.meta)) {
         this.m = { ...this.m, meta: m.meta };
         this.renderHeader();
@@ -768,7 +847,7 @@ class App {
           .map((k) => `<li class="ActionListItem"><span class="ActionListItem-label" title="${esc(k)}"><bdi>${esc(k)}</bdi></span><button type="button" class="btn-link" data-unhide="${esc(k)}">Unhide</button></li>`)
           .join('') +
         `<li class="ActionList-sectionDivider" role="presentation"></li><li><button type="button" class="btn-link unhide-all" data-unhide-all>Unhide all</button></li>`
-      : `<li class="menu-note">Nothing hidden by hand. Press <kbd>h</kbd> or use a file's ${svg('eye-closed')} to hide it.</li>`;
+      : `<li class="menu-note">Nothing hidden by hand. Press <kbd>h</kbd> or use a file's ${icon('eye-closed')} to hide it.</li>`;
     this.paintKeepingMenus(
       slot,
       this.viewedHtml() +
@@ -784,9 +863,9 @@ class App {
     const repo = `https://github.com/${esc(meta.owner)}/${esc(meta.repo)}`;
     const verb = meta.state === 'merged' ? 'merged' : 'wants to merge';
     const radio = (v: DiffStyle, label: string) =>
-      `<button type="button" class="ActionListItem" role="menuitemradio" aria-checked="${this.diffStyle === v}" data-style="${v}"><span class="check">${this.diffStyle === v ? svg('check') : ''}</span>${label}</button>`;
+      `<button type="button" class="ActionListItem" role="menuitemradio" aria-checked="${this.diffStyle === v}" data-style="${v}"><span class="check">${this.diffStyle === v ? icon('check') : ''}</span>${label}</button>`;
     const actions = this.live
-      ? `<button type="button" class="btn btn-sm" data-act="refresh" title="Re-fetch and re-diff (r)">${svg('sync', 'refresh-icon')} Refresh</button><button type="button" class="btn btn-sm" data-act="export" title="Download this view as one .html file">${svg('download')} Export</button>`
+      ? `<button type="button" class="btn btn-sm" data-act="refresh" title="Re-fetch and re-diff (r)">${icon('sync', 'refresh-icon')} Refresh</button><button type="button" class="btn btn-sm" data-act="export" title="Download this view as one .html file">${icon('download')} Export</button>`
       : '';
     const exportedAt = this.live ? null : new Date(this.src.bundle!.exportedAt);
     const snapshot = exportedAt
@@ -800,7 +879,7 @@ class App {
         `<a class="commit-ref base-ref" href="${repo}/tree/${esc(meta.baseRef)}" target="_blank" rel="noreferrer" title="${esc(meta.baseRef)}">${esc(meta.baseRef)}</a><span>from</span>` +
         `<a class="commit-ref head-ref" href="${repo}/tree/${esc(meta.headRef)}" target="_blank" rel="noreferrer" title="${esc(meta.headRef)}">${esc(meta.headRef)}</a>${snapshot}</div>` +
         `<div class="pr-header-actions"><div class="pr-dyn"></div>` +
-        `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Diff view settings" title="Diff view">${svg('gear')}</summary><div class="select-menu-modal right settings-menu"><div class="select-menu-header">Diff view</div><div class="ActionList">${radio('unified', 'Unified')}${radio('split', 'Split')}</div></div></details>` +
+        `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Diff view settings" title="Diff view">${icon('gear')}</summary><div class="select-menu-modal right settings-menu"><div class="select-menu-header">Diff view</div><div class="ActionList">${radio('unified', 'Unified')}${radio('split', 'Split')}</div></div></details>` +
         actions +
         `</div></div>`,
     );
@@ -866,15 +945,15 @@ class App {
       .join('');
     this.paintKeepingMenus(
       this.tree.extra,
-      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.enabled.size ? ' is-filtering' : ''}" aria-label="Hide files by category" title="Hide files by category">${svg('filter')}</summary><div class="select-menu-modal flyout filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
+      `<details class="details-reset details-overlay select-menu" data-menu="filter"><summary class="btn btn-sm btn-icon${this.enabled.size ? ' is-filtering' : ''}" aria-label="Hide files by category" title="Hide files by category">${icon('filter')}</summary><div class="select-menu-modal flyout filter-menu"><div class="select-menu-header">Hide files</div><div class="ActionList">${rows || '<div class="menu-note">No categories match these files.</div>'}</div></div></details>`,
     );
   }
 
   stateBadge(): string {
     const s = this.m.meta.state;
-    const icon = s === 'merged' ? 'git-merge' : s === 'closed' ? 'git-pull-request-closed' : s === 'draft' ? 'git-pull-request-draft' : 'git-pull-request';
+    const name = s === 'merged' ? 'git-merge' : s === 'closed' ? 'git-pull-request-closed' : s === 'draft' ? 'git-pull-request-draft' : 'git-pull-request';
     const label = s[0]!.toUpperCase() + s.slice(1);
-    return `<span class="State State--${s}" title="Status: ${label}">${svg(icon)} ${label}</span>`;
+    return `<span class="State State--${s}" title="Status: ${label}">${icon(name)} ${label}</span>`;
   }
 
   onChromeClick(e: MouseEvent) {
@@ -896,7 +975,13 @@ class App {
   // ----------------------------------------------------------- mount
 
   async mount(container: HTMLElement) {
-    this.hl = new Highlighter(await highlightWorkerUrl(), (lang) => this.grammar(lang));
+    // Ask for the first screen's patches now, so they are here by the time
+    // the shells are, and the first frame with files already shows code.
+    const first: number[] = [];
+    for (let i = 0; i < this.files.length && first.length < 6; i++) if (this.reasonFor(this.files[i]!) === null) first.push(i);
+    const patches = this.loadPatches(first);
+    this.hl = new Highlighter(await highlightWorkers(), (lang) => this.grammar(lang));
+    for (const i of first) this.hl.preload(this.files[i]!.lang);
     const main = h('div', { class: 'diff-view' }, h('div', { class: 'land-mask' }), this.el.flash, this.el.list);
     this.el.sidebar.append(this.tree.el);
     this.el.layout.append(this.el.sidebar, main);
@@ -933,19 +1018,20 @@ class App {
       },
       { signal },
     );
+    await patches;
+    mark('patches');
     this.mountShells();
     this.update();
+    mark('shells');
     // Paint the first screen now rather than on the observer's next tick.
-    const first = this.visible.slice(0, 6);
-    await this.loadPatches(first);
     for (const i of first) this.view(i).render();
     mark('items');
     this.bindKeys();
   }
 
-  grammar(lang: string): Promise<unknown[] | null> {
-    if (this.src.mode === 'export') return Promise.resolve(this.src.bundle!.langs[lang] ?? null);
-    return fetch(`/api/lang/${encodeURIComponent(lang)}`).then((r) => (r.ok ? (r.json() as Promise<unknown[]>) : null));
+  grammar(lang: string): Grammar | null {
+    if (this.src.mode === 'export') return this.src.bundle!.langs[lang] ?? null;
+    return `/api/lang/${encodeURIComponent(lang)}`;
   }
 
   bindKeys() {
@@ -1001,6 +1087,7 @@ async function start(src: Source) {
   if (src.mode === 'live') {
     void fetch('/api/timing', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(t) }).catch(() => {});
     if (src.manifest.stale) void app.refresh();
+    void app.prefetch();
   }
 }
 
