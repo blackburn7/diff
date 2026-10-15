@@ -3,6 +3,12 @@ import type { FileEntry } from './patch.ts';
 
 export type { FileEntry, PrMeta };
 
+export interface RepoHome {
+  repo: string;
+  pulls: { number: number; title: string; author: string; draft: boolean }[];
+  error?: string;
+}
+
 /** What the client needs before any patch text: metadata and the file list. */
 export interface Manifest {
   meta: PrMeta;

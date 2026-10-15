@@ -1,5 +1,5 @@
 import { CATEGORIES, defaultEnabledCategories } from '../geld.ts';
-import type { ExportBundle, ExportRequest, FileEntry, Manifest, ManualState, ReviewedState } from '../types.ts';
+import type { ExportBundle, ExportRequest, FileEntry, Manifest, ManualState, RepoHome, ReviewedState } from '../types.ts';
 import {
   buildRows,
   colgroup,
@@ -22,7 +22,7 @@ import { FileTree } from './tree.ts';
 type Boot =
   | { mode: 'live'; owner: string; repo: string; number: number; manifest: Promise<Manifest>; workers?: Worker[] }
   | { mode: 'export' }
-  | { mode: 'index' };
+  | { mode: 'index'; home?: RepoHome };
 type DiffStyle = 'split' | 'unified';
 
 declare global {
@@ -168,6 +168,7 @@ function fileInnerHtml(f: FileEntry, reviewed: boolean): string {
 class FileView {
   body: HTMLElement;
   rendered = false;
+  repaint = false;
   parsed: Parsed | null = null;
   rows: Row[] = [];
   tokens: Tokens | null = null;
@@ -226,6 +227,7 @@ class FileView {
   }
 
   paint() {
+    this.repaint = false;
     if (!this.parsed?.hunks.length) return;
     const mode = this.app.diffStyle;
     let max = 0;
@@ -326,6 +328,7 @@ class App {
     list: h('div', { class: 'js-diff-progressive-container' }),
   };
   private io: IntersectionObserver;
+  private near = new Set<number>();
   private refreshing = false;
   /** Detaches window/document listeners when a dropped export replaces this view. */
   readonly ac = new AbortController();
@@ -344,9 +347,11 @@ class App {
     this.io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue;
-          const v = this.view(Number((e.target as HTMLElement).dataset.i));
-          if (!v.rendered) this.queueRender(v);
+          const i = Number((e.target as HTMLElement).dataset.i);
+          if (!e.isIntersecting) { this.near.delete(i); continue; }
+          this.near.add(i);
+          const v = this.view(i);
+          if (!v.rendered || v.repaint) this.queueRender(v);
         }
       },
       { rootMargin: '1200px 0px' },
@@ -387,6 +392,7 @@ class App {
   /** One shell per file, in one parse. Hiding and showing only flips `hidden`. */
   mountShells() {
     this.io.disconnect();
+    this.near.clear();
     this.peek = null;
     const reasons = this.files.map((f) => this.reasonFor(f));
     this.el.list.innerHTML = this.files.map((f, i) => fileShellHtml(f, i, reasons[i] !== null, this.isReviewed(i))).join('');
@@ -532,7 +538,7 @@ class App {
   private renderScheduled = false;
   queueRender(v: FileView, repaint = false) {
     if (!this.renderQueue.includes(v)) this.renderQueue.push(v);
-    (v as { repaint?: boolean }).repaint ||= repaint;
+    v.repaint ||= repaint;
     if (this.renderScheduled) return;
     this.renderScheduled = true;
     const step = () => {
@@ -545,8 +551,8 @@ class App {
       };
       const order = new Map(this.renderQueue.map((v) => [v, away(v)]));
       this.renderQueue.sort((a, b) => order.get(a)! - order.get(b)!);
-      while (this.renderQueue.length && performance.now() - t < 8) {
-        const next = this.renderQueue.shift()! as FileView & { repaint?: boolean };
+      while (this.renderQueue.length && performance.now() - t < 5) {
+        const next = this.renderQueue.shift()!;
         if (next.repaint) {
           next.repaint = false;
           if (next.rendered) next.paint();
@@ -598,6 +604,8 @@ class App {
   private deferred = new Set<FileView>();
   private pointerDown = false;
   paintWhenIdle(v: FileView) {
+    v.repaint = true;
+    if (!this.near.has(v.i)) return;
     if (!this.selectionIn(v)) return this.queueRender(v, true);
     this.deferred.add(v);
   }
@@ -632,6 +640,7 @@ class App {
     this.endPeek(i);
     const v = this.view(i);
     if (!v.rendered) v.render();
+    else if (v.repaint) this.queueRender(v);
     this.holdAt(v.el);
     this.setCurrent(this.visible.indexOf(i));
   }
@@ -797,7 +806,10 @@ class App {
     this.diffStyle = s;
     store.set(PREFS_KEY, { diffStyle: s });
     this.el.root.dataset.diffStyle = s;
-    for (const v of this.views.values()) if (v.rendered) this.queueRender(v, true);
+    for (const v of this.views.values()) if (v.rendered) {
+      v.repaint = true;
+      if (this.near.has(v.i)) this.queueRender(v);
+    }
     this.renderHeader();
   }
 
@@ -1026,7 +1038,7 @@ class App {
     this.update();
     mark('shells');
     // Paint the first screen now rather than on the observer's next tick.
-    for (const i of first) this.view(i).render();
+    for (const i of first.slice(0, 3)) this.view(i).render();
     mark('items');
     this.bindKeys();
   }
@@ -1096,15 +1108,26 @@ function showError(msg: string) {
   document.getElementById('app')!.replaceChildren(h('div', { class: 'flash flash-error boot-error' }, msg));
 }
 
-function renderIndex() {
+function renderIndex(home?: RepoHome) {
   const input = h('input', { class: 'form-control', placeholder: 'https://github.com/owner/repo/pull/123 or owner/repo#123', autofocus: true }) as HTMLInputElement;
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
-    const v = input.value.trim();
+    let v = input.value.trim();
+    if (home && /^#?\d+$/.test(v)) v = `${home.repo}#${v.replace('#', '')}`;
     const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(v) ?? /^([\w.-]+)\/([\w.-]+)#(\d+)$/.exec(v);
     if (m) location.href = `/${m[1]}/${m[2]}/pull/${m[3]}`;
   });
-  document.getElementById('app')!.replaceChildren(h('div', { class: 'index' }, h('h1', {}, 'diff'), input));
+  const page = h('div', { class: 'index' }, h('h1', {}, home?.repo ?? 'diff'), input);
+  if (home) {
+    page.append(h('p', {}, h('a', { class: 'btn', href: `/${home.repo}/tree` }, 'Code · Browse repository')));
+    input.placeholder = 'PR number or GitHub pull request URL';
+    page.append(h('p', {}, 'Recently updated open pull requests'), h('a', { href: `https://github.com/${home.repo}/pulls` }, 'View all on GitHub'));
+    if (home.error) page.append(h('p', { class: 'flash flash-error', role: 'alert' }, home.error));
+    else if (!home.pulls.length) page.append(h('p', {}, 'No open pull requests.'));
+    for (const p of home.pulls) page.append(h('a', { class: 'repo-pull', href: `/${home.repo}/pull/${p.number}` },
+      h('strong', {}, p.title), h('small', {}, `#${p.number} · ${p.author}${p.draft ? ' · Draft' : ''}`)));
+  }
+  document.getElementById('app')!.replaceChildren(page);
 }
 
 // Drop an exported .html onto the live page to view it.
@@ -1133,7 +1156,7 @@ async function main() {
       return await start(sourceFromBundle(bundle));
     }
     enableDrop();
-    if (boot.mode === 'index') return renderIndex();
+    if (boot.mode === 'index') return renderIndex(boot.home);
     const manifest = await boot.manifest;
     mark('manifest');
     await start({ mode: 'live', manifest, patches: new Map() });

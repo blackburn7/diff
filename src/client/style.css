@@ -361,6 +361,8 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .x-last { border-top-right-radius: .2em; border-bottom-right-radius: .2em; }
 
 /* ---------------------------------------------------------------- index */
-.index { max-width: 640px; margin: 15vh auto; padding: 0 24px; }
+.index { max-width: 880px; margin: 6vh auto; padding: 0 24px; }
 .index h1 { font-weight: 400; }
 .index .form-control { padding-left: 12px; }
+.repo-pull { display: block; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.repo-pull small { display: block; color: var(--fg-muted); }

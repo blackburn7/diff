@@ -7,6 +7,7 @@ a local, private, very fast github "files changed" view. point it at any PR, inc
 it's for reading and approving. comments, threads, and CI annotations stay on github.
 
 ```sh
+diff                              # open AuctorAI/auctor's recent open PRs
 diff https://github.com/owner/repo/pull/123
 diff owner/repo#123
 diff owner/repo#123 --no-open   # print the url instead of opening it
@@ -17,6 +18,28 @@ diff --stop
 it shadows `/usr/bin/diff` through a tiny shim in `~/.local/bin/diff` — anything that isn't a PR ref or one of the flags above just falls through to the real diff, so `diff a b` still works.
 
 needs `bun`, `git`, and `gh` (logged in). auth is just `gh auth token`, so whatever you can see on github, this can see.
+
+This local installation opens `AuctorAI/auctor` on the start page. Refresh to
+reload its 30 most recently updated open PRs, click a PR, or enter its number.
+Set `PRV_REPO=owner/repo` when starting the server to use a different repository.
+
+The **Code · Browse repository** link opens a GitHub-style file explorer. Search
+or page through branches, expand folders, or press `⌘K` (`Ctrl+K`) or `t` to find a file. The URL
+records the selected branch, commit, and path, so shared links show the same
+snapshot; **Refresh** loads the branch's latest commit. File views include syntax
+highlighting, line links, wrapping, copy, raw text, downloads, and image previews.
+This reads GitHub through the existing `gh` login without changing a local checkout.
+Files above 2 MB link to GitHub, and non-text files can be downloaded.
+Markdown opens in a GitHub-style preview with Preview/Code tabs, tables, task
+lists, highlighted code blocks, and links and images pinned to the selected
+commit. The Markdown renderer loads only when a Markdown file is opened.
+
+`⌘⇧K` (`Ctrl+Shift+K`) searches file contents across the selected commit, with
+literal and regex modes and links to matching lines. The first search downloads
+a snapshot into `~/.cache/prv/search`; subsequent searches use local `rg`.
+This also requires `rg` and `python3`.
+In either search popup, `↑`/`↓` selects a result while typing stays in the search
+field, `Enter` opens it, and `Esc` closes the popup.
 
 ## why
 
@@ -81,3 +104,11 @@ bun run check     # types, tests, then the bundle and perf budgets
 `checks/budget.json` holds hard budgets, and they only go down. `checks/bundle.ts` checks the size of the app, the worker, and the stylesheet. `checks/perf.ts` serves a synthetic 1,471-file PR (`checks/fixture.ts`, same bytes every run) on its own port and cache, drives headless Firefox through first load, scrolling, a scrollbar drag, `j`, tree jumps, reviewing, category toggles, the tree filter, and unified → split, and compares the median of 5 runs. Timings come from Event Timing (input → next paint) and a frame recorder (time past 50 ms per frame). If one trips, make it faster; don't raise the number. When a change makes things faster, `bun run ratchet` lowers the budgets to the new numbers plus headroom.
 
 `bun checks/perf.ts owner/repo#N` runs the same scenarios against a real PR from `~/.cache/prv` (open it with `diff` once first) and only reports. The first run needs Firefox for Playwright: `bunx playwright-core install firefox`.
+
+`bun checks/repository-perf.ts --commit SHA --out /tmp/repository-perf.json`
+measures the running repository explorer in Chromium: initial paint, navigation,
+branch picker, file search, content search, requests, bytes, and long tasks.
+Use the same commit before and after changes, with its search snapshot already
+prepared. It reports medians over five fresh browser contexts; GitHub object and
+search caches remain warm in the local server. Set `REPO_BROWSER_EXECUTABLE` to
+use an installed Chromium executable, or install Playwright Chromium.

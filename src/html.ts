@@ -1,5 +1,6 @@
 // The HTML shell shared by the live page and exported files.
 import { readFileSync } from 'node:fs';
+import type { RepoHome } from './types.ts';
 
 // Inlined so exports carry the favicon too.
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(readFileSync(new URL('logo.svg', import.meta.url), 'utf8').trim())}`;
@@ -55,13 +56,23 @@ export function livePage(p: { owner: string; repo: string; number: number; css: 
   });
 }
 
-export function indexPage(p: { css: string; hash: string }): string {
+export function indexPage(p: { css: string; hash: string; home?: RepoHome }): string {
   const src = `/app.js?v=${p.hash}`;
   return shell({
-    title: 'diff',
+    title: p.home ? `${p.home.repo} · diff` : 'diff',
     css: p.css,
-    boot: `window.__prvBoot={mode:'index'};`,
+    boot: `window.__prvBoot=${JSON.stringify({ mode: 'index', home: p.home }).replace(/</g, '\\u003c')};`,
     body: `<script type="module" src="${src}"></script>`,
+  });
+}
+
+export function repoPage(p: { owner: string; repo: string; css: string; hash: string }): string {
+  const boot = JSON.stringify({ owner: p.owner, repo: p.repo, hash: p.hash }).replace(/</g, '\\u003c');
+  return shell({
+    title: `${p.owner}/${p.repo} · Code`, css: p.css,
+    boot: `window.__repoBoot=${boot};`,
+    head: `<link rel="stylesheet" href="/repo.css?v=${p.hash}">\n`,
+    body: `<script type="module" src="/repo.js?v=${p.hash}"></script>`,
   });
 }
 
