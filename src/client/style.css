@@ -211,9 +211,10 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .diff-layout { display: grid; grid-template-columns: 380px minmax(0, 1fr); }
 .diff-sidebar { contain: layout style; z-index: 6; position: sticky; top: var(--hdr-h, 57px); align-self: start; display: flex; flex-direction: column; height: calc(100vh - var(--hdr-h, 57px)); padding: var(--land-gap) 16px 0; border-right: 1px solid var(--border); }
 .diff-view { min-width: 0; padding: 0 16px; }
-/* An opaque strip filling the gap under the page header, so content scrolling
-   under a pinned file header never shows above it. */
-.land-mask { position: sticky; top: var(--hdr-h, 57px); z-index: 5; height: var(--land-gap); margin: 0 -16px; background: var(--bg); }
+/* An opaque strip filling the gap under the page header. Files paint over it,
+   so a header pushed up by its file's end slides through the gap whole; a
+   pinned header blanks the gap above itself (see .file-header::before). */
+.land-mask { position: sticky; top: var(--hdr-h, 57px); height: var(--land-gap); margin: 0 -16px; background: var(--bg); }
 /* Deliberate departure from GitHub: unified diffs sit in a centered column
    wide enough for ~135 columns of 12px code; split stays full width. */
 [data-diff-style="unified"] .js-diff-progressive-container { max-width: 1100px; margin: 0 auto; }
@@ -279,7 +280,9 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
    the header in the same frame, so nothing is positioned from script. */
 .file-header { position: sticky; top: calc(var(--hdr-h, 57px) + var(--land-gap) + 1px); z-index: 2; display: flex; align-items: center; justify-content: space-between; min-height: 36px; padding: 2px 8px; }
 .file-header::before, .file-header::after { position: absolute; inset: -1px -1px 0; z-index: -1; pointer-events: none; content: ""; }
-.file-header::before { background: var(--bg); }
+/* The backing also reaches up over the gap, so code scrolling under a pinned
+   header never shows above it. The file's clip trims it when unpinned. */
+.file-header::before { top: calc(-1px - var(--land-gap)); background: var(--bg); }
 /* The bottom rule is an inset shadow so it stops inside the side edges. */
 .file-header::after { background: var(--bg-muted); border: var(--edge); border-bottom: 0; border-radius: 6px 6px 0 0; box-shadow: inset 0 -1px var(--border); }
 .file.collapsed .file-header::before, .file.collapsed .file-header::after { bottom: -1px; }
