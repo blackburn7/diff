@@ -239,7 +239,7 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 .form-control { width: 100%; height: 28px; padding: 3px 8px 3px 32px; font-size: 14px; line-height: 20px; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--input-shadow); outline: none; }
 .form-control::placeholder { color: var(--fg-muted); }
 .form-control:focus { border-color: var(--fg-accent); box-shadow: inset 0 0 0 1px var(--fg-accent); }
-.file-tree-nav { flex: 1; min-height: 0; margin: 0 -16px; padding: 0 16px 16px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.file-tree-nav { flex: 1; min-height: 0; margin: 0 -16px; padding: 0 16px 16px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .file-tree-nav:hover { scrollbar-color: var(--border) transparent; }
 .ActionList--tree, .ActionList--subGroup { margin: 0; padding: 0; list-style: none; }
 .ActionList-item { position: relative; list-style: none; border-radius: 6px; }
