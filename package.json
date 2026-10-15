@@ -2,6 +2,7 @@
   "name": "diff",
   "type": "module",
   "private": true,
+  "license": "Unlicense",
   "bin": {
     "diff": "bin/diff.ts"
   },

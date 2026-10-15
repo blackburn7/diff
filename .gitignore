@@ -4,6 +4,7 @@
 # root
 !.gitignore
 !README.md
+!LICENSE
 !package.json
 !bun.lock
 !tsconfig.json

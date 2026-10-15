@@ -2,7 +2,9 @@
 
 # diff
 
-a local, private, very fast github "files changed" view. point it at any PR, including private repos and PRs too big for github's diff API (it refuses anything over 300 files).
+a local, private, very fast github "files changed" view. point it at any PR, including private ones. the diff is computed with local git, not fetched from github, so PR size is only limited by your machine.
+
+it's for reading and approving. comments, threads, and CI annotations stay on github.
 
 ```sh
 diff https://github.com/owner/repo/pull/123
@@ -22,11 +24,11 @@ github's diff viewer is slow on big PRs and doesn't let you hide the stuff you d
 
 ## how it works
 
-it keeps a blobless bare clone per repo in `~/.cache/prv/<owner>/<repo>.git`. on load it fetches the PR head and base, takes the merge base, and runs `git diff -M` locally — no diff API, no file limits. the patch gets split per file and classified with geld's catalog (ported verbatim from geld 0.1.2). results are cached by `<merge-base>..<head>`, so an unchanged head is basically free.
+it keeps a blobless bare clone per repo in `~/.cache/prv/<owner>/<repo>.git`. on load it fetches the PR head and base, takes the merge base, and runs `git diff -M` locally — no diff API. the patch gets split per file and classified with geld's catalog (ported verbatim from geld 0.1.2). results are cached by `<merge-base>..<head>`, so an unchanged head is basically free.
 
 a background server on `127.0.0.1:7717` (or `PRV_PORT`) serves the page. the page paints from cache immediately, then refreshes in the background, so a reload is a refresh. it renders github's own diff markup with primer styling, shiki runs in a worker, and file bodies only render near the viewport.
 
-rough #'s on a ~1000-file PR: ~80ms warm, ~0.9s on a new head, ~8s the very first time (mostly the clone).
+from ~200 loads of a large private monorepo: first paint ~110ms median from cache, ~1.5s on a new head (mostly github's API and the fetch; `git diff` on a 1,383-file PR is ~0.1s), and longer the very first time, for the clone. the server idles at ~60MB and no CPU.
 
 ## hiding
 
