@@ -45,6 +45,8 @@ const DEFAULT_HIDDEN = [...defaultEnabledCategories(), 'agents', 'docs', 'manual
 const LARGE_PATCH = 150_000;
 /** How much patch text to fetch ahead of need, at most (see `App.prefetch`). */
 const PREFETCH_BYTES = 32_000_000;
+/** Most text, both sides together, to send a file to the highlighter. */
+const MAX_HIGHLIGHT = 2_000_000;
 /** Rows per table in a long diff (see `FileView.paint`). */
 const SEGMENT = 100;
 const CAT_TITLE = new Map(CATEGORIES.map((c) => [c.id as string, c.title]));
@@ -222,7 +224,12 @@ class FileView {
       return this.message(f.status === 'added' ? 'Empty file.' : 'File without changes.');
     }
     this.paint();
-    if (!this.tokens) void this.highlight();
+    if (this.tokens) return;
+    // A hunk can open inside a docstring or a call, which only the lines
+    // above it reveal: color from the patch first, then recolor from the
+    // whole files, which queue behind the patches on screen.
+    const whole = this.app.live && f.status !== 'added' && f.status !== 'deleted';
+    void this.highlight().then(() => (whole ? this.hydrate().catch(() => {}) : undefined));
   }
 
   paint() {
@@ -250,8 +257,9 @@ class FileView {
     let nOld: number;
     let oldIdx: (l: Line) => number;
     let newIdx: (l: Line) => number;
-    if (this.full) {
-      docs = [this.full.old.join('\n'), this.full.new.join('\n')];
+    const whole = this.full && [this.full.old.join('\n'), this.full.new.join('\n')];
+    if (whole && whole[0]!.length + whole[1]!.length <= MAX_HIGHLIGHT) {
+      docs = whole;
       nOld = 1;
       oldIdx = (l) => l.o - 1;
       newIdx = (l) => l.n - 1;
@@ -262,7 +270,7 @@ class FileView {
       oldIdx = (l) => d.oldIdx.get(l) ?? -1;
       newIdx = (l) => d.newIdx.get(l) ?? -1;
     }
-    if (docs.reduce((a, s) => a + s.length, 0) > 2_000_000) return;
+    if (docs.reduce((a, s) => a + s.length, 0) > MAX_HIGHLIGHT) return;
     const full = this.full;
     const out = await this.app.hl.tokenize(f.lang, docs);
     if (!out || this.full !== full) return;
@@ -280,8 +288,8 @@ class FileView {
         if (a[a.length - 1] === '') a.pop();
         return a.map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
       };
+      // The patch's colors stay up until the whole files' replace them.
       this.full = { old: split(o), new: split(n) };
-      this.tokens = null;
       void this.highlight();
     })();
     return this.hydrating;
