@@ -334,10 +334,12 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
   if (specP && api.baseRefName === guessedBase) {
     d = await specP;
   } else {
-    await fetchP;
-    await specP?.catch(() => {});
+    // The guessed base may be gone (a stacked PR's base branch deleted after
+    // merge), which fails the whole speculative fetch, head included. Refetch
+    // the head with the real base; it's a no-op if the first fetch got it.
+    await (specP ?? fetchP).catch(() => {});
     const t = performance.now();
-    await git(dir, ['fetch', '--no-tags', '-q', 'origin', `+refs/heads/${api.baseRefName}:${baseRefName(api.baseRefName)}`]);
+    await git(dir, ['fetch', '--no-tags', '-q', 'origin', refspecs[0]!, `+refs/heads/${api.baseRefName}:${baseRefName(api.baseRefName)}`]);
     mark('fetchBase', t);
     d = await diffAgainst(owner, repo, dir, n, api.baseRefName, mark);
   }
