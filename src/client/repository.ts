@@ -29,12 +29,12 @@ function tokenize(lang: string, docs: string[]) {
 }
 const requests = new Map<string, { expires: number; promise: Promise<unknown> }>();
 
-function get<T>(endpoint: string, params: Record<string, string> = {}, ttl = 0): Promise<T> {
+function get<T>(endpoint: string, params: Record<string, string> = {}, ttl = 0, signal?: AbortSignal): Promise<T> {
   const url = `${api}/${endpoint}?${new URLSearchParams(params)}`;
   const existing = requests.get(url);
   if (existing && existing.expires > Date.now()) return existing.promise as Promise<T>;
   const promise = (async () => {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     return body as T;
@@ -497,12 +497,15 @@ grepButton.onclick = () => {
   list.replaceChildren(message('Search every tracked text file at this commit.'));
   let sequence = 0;
   let timer: ReturnType<typeof setTimeout>;
+  let pending: AbortController | undefined;
   async function search(id: number) {
     if (!modal.open || id !== sequence) return;
     const query = input.value.trim();
     if (!query) { list.replaceChildren(message('Search every tracked text file at this commit.')); return; }
+    const controller = new AbortController();
+    pending = controller;
     try {
-      const result = await get<{ indexing?: boolean; matches: { path: string; line: number; text: string }[]; truncated: boolean }>('grep', { commit: snap.sha, q: query, regex: regex.checked ? '1' : '0' });
+      const result = await get<{ indexing?: boolean; matches: { path: string; line: number; text: string }[]; truncated: boolean }>('grep', { commit: snap.sha, q: query, regex: regex.checked ? '1' : '0' }, 0, controller.signal);
       if (!modal.open || id !== sequence) return;
       if (result.indexing) {
         list.replaceChildren(message('Preparing this commit for local search. The first search downloads a snapshot; later searches reuse it.'));
@@ -517,17 +520,19 @@ grepButton.onclick = () => {
         list.append(button);
       }
       list.append(message(result.truncated ? 'Showing the first 200 matches. Narrow your search for more specific results.' : `${result.matches.length} matching lines.`));
-    } catch (e) { if (modal.open && id === sequence) failure(list, e); }
+    } catch (e) { if (!controller.signal.aborted && modal.open && id === sequence) failure(list, e); }
+    finally { if (pending === controller) pending = undefined; }
   }
   function schedule() {
     const id = ++sequence;
     clearTimeout(timer);
+    pending?.abort();
     list.replaceChildren(message(input.value.trim() ? 'Searching…' : 'Search every tracked text file at this commit.'));
     timer = setTimeout(() => void search(id), 200);
   }
   input.oninput = schedule;
   regex.onchange = schedule;
-  modal.addEventListener('close', () => { ++sequence; clearTimeout(timer); });
+  modal.addEventListener('close', () => { ++sequence; clearTimeout(timer); pending?.abort(); });
 };
 async function fromURL() {
   const q = new URLSearchParams(location.search);

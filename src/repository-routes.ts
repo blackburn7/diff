@@ -39,19 +39,19 @@ export async function routeRepository(req: Request, url: URL, client: ClientBuil
   }
   if ((m = /^\/api\/repo\/([\w.-]+)\/([\w.-]+)\/(snapshot|branches|tree|entry|paths|raw|grep)$/.exec(path))) {
     if (req.method !== 'GET') return json({ error: 'Method not allowed' }, { status: 405 });
-    return repositoryApi(url, m);
+    return repositoryApi(req, url, m);
   }
   return null;
 }
 
-async function repositoryApi(url: URL, m: RegExpExecArray): Promise<Response> {
+async function repositoryApi(req: Request, url: URL, m: RegExpExecArray): Promise<Response> {
   const { repoSnapshot, repoBranches, repoTree, repoEntry, repoFile, repoBlob, RepoError } = await import('./repository.ts');
   try {
     const [owner, repo, action] = [m[1]!, m[2]!, m[3]!];
     const q = url.searchParams;
     if (action === 'grep') {
       const { grepRepository } = await import('./repository-search.ts');
-      return json(await grepRepository(owner, repo, q.get('commit') ?? '', q.get('q') ?? '', q.get('regex') === '1'));
+      return json(await grepRepository(owner, repo, q.get('commit') ?? '', q.get('q') ?? '', q.get('regex') === '1', req.signal));
     }
     if (action === 'snapshot') {
       const snapshot = await repoSnapshot(owner, repo, q.get('ref') ?? '', q.get('commit') ?? '');

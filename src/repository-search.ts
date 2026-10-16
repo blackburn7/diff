@@ -44,7 +44,8 @@ async function prepare(owner: string, repo: string, sha: string, root: string) {
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }
 
-export async function grepRepository(owner: string, repo: string, sha: string, query: string, regex = false): Promise<SearchResult> {
+export async function grepRepository(owner: string, repo: string, sha: string, query: string, regex = false, signal?: AbortSignal): Promise<SearchResult> {
+  signal?.throwIfAborted();
   checkRepo(owner, repo); checkSha(sha);
   if (!query.trim()) return { matches: [], truncated: false };
   if (query.length > 2000 || query.includes('\n') || query.includes('\0')) throw new RepoError('Use a single search expression under 2,000 characters');
@@ -63,17 +64,57 @@ export async function grepRepository(owner: string, repo: string, sha: string, q
     }
     return { indexing: true, matches: [], truncated: false };
   }
-  const process = Bun.spawn(['rg', '--json', '--line-number', '--hidden', '--no-ignore', '--no-messages', '--color', 'never', '--ignore-case',
+  return grepDirectory(directory, query, regex, signal);
+}
+
+// Bound aggregate CPU use across tabs. A cancelled queued request never starts
+// a process, and a running request holds its slot until its process has exited.
+let running = 0;
+const waiting = new Set<() => void>();
+async function acquireSearch(signal?: AbortSignal): Promise<() => void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const cancel = () => { waiting.delete(grant); reject(signal!.reason); };
+    const grant = () => {
+      waiting.delete(grant);
+      signal?.removeEventListener('abort', cancel);
+      running++;
+      let released = false;
+      resolve(() => {
+        if (released) return;
+        released = true;
+        running--;
+        waiting.values().next().value?.();
+      });
+    };
+    if (running < 2) grant();
+    else { waiting.add(grant); signal?.addEventListener('abort', cancel, { once: true }); }
+  });
+}
+
+export async function grepDirectory(directory: string, query: string, regex = false, signal?: AbortSignal): Promise<SearchResult> {
+  const release = await acquireSearch(signal);
+  try {
+    signal?.throwIfAborted();
+    return await runGrep(directory, query, regex, signal);
+  } finally { release(); }
+}
+
+async function runGrep(directory: string, query: string, regex: boolean, signal?: AbortSignal): Promise<SearchResult> {
+  const process = Bun.spawn(['rg', '--threads', '1', '--json', '--line-number', '--hidden', '--no-ignore', '--no-messages', '--color', 'never', '--ignore-case',
     ...(regex ? [] : ['--fixed-strings']), '-e', query, '.'], { cwd: directory, stdout: 'pipe', stderr: 'pipe' });
   const stderr = new Response(process.stderr).text();
   const reader = process.stdout.getReader();
   const decoder = new TextDecoder();
   const matches: SearchMatch[] = [];
-  let pending = '', truncated = false;
+  const stop = () => { if (process.exitCode === null) process.kill(); };
+  signal?.addEventListener('abort', stop, { once: true });
+  let pending = '', truncated = false, ended = false;
   try {
     outer: for (;;) {
       const { value, done } = await reader.read();
-      if (done) break;
+      signal?.throwIfAborted();
+      if (done) { ended = true; break; }
       pending += decoder.decode(value, { stream: true });
       let newline: number;
       while ((newline = pending.indexOf('\n')) >= 0) {
@@ -88,9 +129,15 @@ export async function grepRepository(owner: string, repo: string, sha: string, q
         matches.push({ path: path.replace(/^\.\//, ''), line: data.line_number, text: text.replace(/\r?\n$/, '').slice(0, 500) });
       }
     }
-  } finally { reader.releaseLock(); }
+  } finally {
+    signal?.removeEventListener('abort', stop);
+    if (!ended) stop();
+    reader.releaseLock();
+    await process.exited;
+  }
   const code = await process.exited;
   const error = await stderr;
+  signal?.throwIfAborted();
   if (!truncated && code !== 0 && code !== 1) throw new RepoError(error.trim() || 'Search failed');
   return { matches, truncated };
 }

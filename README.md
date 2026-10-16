@@ -121,3 +121,10 @@ and export HTML match upstream. Directory browsing starts no syntax worker;
 Markdown builds on its first preview, and the grep backend loads on first search.
 `bun test test/isolation.test.ts` checks these server boundaries, including
 concurrent requests, rebuilds, and asset cache headers.
+
+Content scans use at most two ripgrep processes with one search thread each across
+all tabs. Changing a query or closing the popup cancels its request, removes
+queued scans, and stops any running scan before releasing its slot. The initial
+snapshot download is shared between queries. `bun test test/search.test.ts`
+checks search results, HTTP cancellation, process cleanup, and the concurrency
+limit; the result tests use `rg` when it is installed.
