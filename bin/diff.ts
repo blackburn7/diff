@@ -12,7 +12,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SERVER = join(import.meta.dir, '..', 'src', 'server.ts');
 const LOG = join(CACHE_ROOT, 'server.log');
 
-const USAGE = `usage: diff            open the default repository
+const USAGE = `usage: diff            open the start page
        diff <https://github.com/owner/repo/pull/N | owner/repo#N> [--no-open]
        diff --stop      stop the background server
        diff --restart   restart the background server`;

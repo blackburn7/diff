@@ -1,5 +1,5 @@
 import { getFiletypeFromFileName } from '@pierre/diffs';
-import { githubRead } from './github.ts';
+import { githubRead } from './repository-github.ts';
 import type { RepoBranches, RepoEntry, RepoFile, RepoSnapshot, RepoTree } from './repository-types.ts';
 
 export class RepoError extends Error {

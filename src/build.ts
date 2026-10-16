@@ -13,10 +13,6 @@ export interface ClientBuild {
   js: string;
   css: string;
   worker: string;
-  repoJs: string;
-  repoCss: string;
-  markdownJs: string;
-  markdownCss: string;
   hash: string;
 }
 
@@ -35,10 +31,8 @@ function iconCss(): string {
 }
 
 export async function buildClient(): Promise<ClientBuild> {
-  const [js, worker, repoJs, markdownJs] = await Promise.all([bundle('src/client/app.ts', 'esm'), bundle('src/client/hl-worker.ts', 'iife'), bundle('src/client/repository.ts', 'esm'), bundle('src/client/markdown.ts', 'esm')]);
+  const [js, worker] = await Promise.all([bundle('src/client/app.ts', 'esm'), bundle('src/client/hl-worker.ts', 'iife')]);
   const css = readFileSync(join(ROOT, 'src/client/style.css'), 'utf8') + iconCss();
-  const repoCss = readFileSync(join(ROOT, 'src/client/repository.css'), 'utf8');
-  const markdownCss = readFileSync(join(ROOT, 'node_modules/github-markdown-css/github-markdown.css'), 'utf8');
-  const hash = createHash('sha1').update(js).update(worker).update(css).update(repoJs).update(repoCss).update(markdownJs).update(markdownCss).digest('hex').slice(0, 10);
-  return { js, css, worker, repoJs, repoCss, markdownJs, markdownCss, hash };
+  const hash = createHash('sha1').update(js).update(worker).update(css).digest('hex').slice(0, 10);
+  return { js, css, worker, hash };
 }

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { CACHE_ROOT, githubArchive } from './github.ts';
+import { CACHE_ROOT } from './github.ts';
+import { githubArchive } from './repository-github.ts';
 import { checkRepo, checkSha, RepoError } from './repository.ts';
 
 export interface SearchMatch { path: string; line: number; text: string }

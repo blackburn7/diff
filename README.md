@@ -7,7 +7,7 @@ a local, private, very fast github "files changed" view. point it at any PR, inc
 it's for reading and approving. comments, threads, and CI annotations stay on github.
 
 ```sh
-diff                              # open AuctorAI/auctor's recent open PRs
+diff                              # open the start page
 diff https://github.com/owner/repo/pull/123
 diff owner/repo#123
 diff owner/repo#123 --no-open   # print the url instead of opening it
@@ -19,11 +19,12 @@ it shadows `/usr/bin/diff` through a tiny shim in `~/.local/bin/diff` — anythi
 
 needs `bun`, `git`, and `gh` (logged in). auth is just `gh auth token`, so whatever you can see on github, this can see.
 
-This local installation opens `AuctorAI/auctor` on the start page. Refresh to
-reload its 30 most recently updated open PRs, click a PR, or enter its number.
-Set `PRV_REPO=owner/repo` when starting the server to use a different repository.
+Set `PRV_REPO=owner/repo` when starting the server to use a repository start page.
+Refresh to reload its 30 most recently updated open PRs, click a PR, or enter its
+number. Without this setting, the original PR URL input is shown.
 
-The **Code · Browse repository** link opens a GitHub-style file explorer. Search
+The repository start page's **Code · Browse repository** link opens a GitHub-style file explorer.
+You can also open `http://127.0.0.1:7717/owner/repo/tree` directly. Search
 or page through branches, expand folders, or press `⌘K` (`Ctrl+K`) or `t` to find a file. The URL
 records the selected branch, commit, and path, so shared links show the same
 snapshot; **Refresh** loads the branch's latest commit. File views include syntax
@@ -112,3 +113,11 @@ Use the same commit before and after changes, with its search snapshot already
 prepared. It reports medians over five fresh browser contexts; GitHub object and
 search caches remain warm in the local server. Set `REPO_BROWSER_EXECUTABLE` to
 use an installed Chromium executable, or install Playwright Chromium.
+
+The repository feature has its own lazy server routes and builds. Homepage,
+repository, and Markdown assets have separate content hashes; editing them does
+not invalidate the PR client's cache. The PR app, CSS, worker, and generated PR
+and export HTML match upstream. Directory browsing starts no syntax worker;
+Markdown builds on its first preview, and the grep backend loads on first search.
+`bun test test/isolation.test.ts` checks these server boundaries, including
+concurrent requests, rebuilds, and asset cache headers.

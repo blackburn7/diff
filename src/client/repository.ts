@@ -3,7 +3,7 @@ import { Highlighter } from './highlight.ts';
 import type { Tok } from './diff.ts';
 import type { RepoBranches, RepoEntry, RepoFile, RepoPaths, RepoSnapshot, RepoTree } from '../repository-types.ts';
 
-const boot = (window as unknown as { __repoBoot: { owner: string; repo: string; hash: string } }).__repoBoot;
+const boot = (window as unknown as { __repoBoot: { owner: string; repo: string; workerHash: string } }).__repoBoot;
 const repo = `${boot.owner}/${boot.repo}`;
 const base = `/${repo}`;
 const api = `/api/repo/${repo}`;
@@ -20,8 +20,13 @@ let currentPath = '';
 let currentType = 'tree';
 const trees = new Map<string, Promise<RepoTree>>();
 const folders = new Map<string, { details: HTMLDetailsElement; load: () => Promise<void> }>();
-const workers = [new Worker(`/hl-worker.js?v=${boot.hash}`)];
-const highlight = new Highlighter(workers, (lang) => `/api/lang/${encodeURIComponent(lang)}`);
+// Directory browsing has no syntax worker or grammar requests.
+let highlighter: Highlighter | undefined;
+function tokenize(lang: string, docs: string[]) {
+  if (lang === 'text') return Promise.resolve(null);
+  highlighter ??= new Highlighter([new Worker(`/hl-worker.js?v=${boot.workerHash}`)], (lang) => `/api/lang/${encodeURIComponent(lang)}`);
+  return highlighter.tokenize(lang, docs);
+}
 const requests = new Map<string, { expires: number; promise: Promise<unknown> }>();
 
 function get<T>(endpoint: string, params: Record<string, string> = {}, ttl = 0): Promise<T> {
@@ -180,9 +185,15 @@ function rawURL(path: string, extra: Record<string, string> = {}) {
 let markdown: Promise<typeof import('./markdown.ts')> | undefined;
 function markdownRenderer() {
   if (!markdown) {
-    const styles = h('link', { rel: 'stylesheet', href: `/markdown.css?v=${boot.hash}` });
-    document.head.append(styles);
-    markdown = import(`/markdown.js?v=${boot.hash}`).catch((e) => { markdown = undefined; styles.remove(); throw e; });
+    let styles: HTMLElement | undefined;
+    markdown = (async () => {
+      const response = await fetch('/api/markdown-assets');
+      if (!response.ok) throw new Error('Could not load Markdown preview');
+      const { hash } = await response.json() as { hash: string };
+      styles = h('link', { rel: 'stylesheet', href: `/markdown.css?v=${hash}` });
+      document.head.append(styles);
+      return import(`/markdown.js?v=${hash}`) as Promise<typeof import('./markdown.ts')>;
+    })().catch((e) => { markdown = undefined; styles?.remove(); throw e; });
   }
   return markdown;
 }
@@ -253,7 +264,7 @@ async function fileView(entry: RepoEntry, file: RepoFile, path: string, id: numb
     appendLines(Math.max(1000, lineTarget));
     if (lineTarget) document.getElementById(`L${lineTarget}`)?.scrollIntoView({ block: 'center' });
     if (text.length <= 300_000) {
-      const result = await highlight.tokenize(file.lang, [text]);
+      const result = await tokenize(file.lang, [text]);
       if (id !== navigation) return;
       tokens = result?.[0];
       tbody.querySelectorAll<HTMLElement>('.repo-line-code').forEach((cell, i) => paintLine(cell, i));
@@ -282,7 +293,7 @@ async function fileView(entry: RepoEntry, file: RepoFile, path: string, id: numb
           href: (path, hash) => href(path, 'blob', snap) + hash,
           raw: (path) => `${api}/raw?${new URLSearchParams({ tree: snap.tree, path, image: '1' })}`,
           navigate: (path, hash) => void navigate(path, true, 0, hash),
-          tokenize: (lang, docs) => highlight.tokenize(lang, docs),
+          tokenize,
         });
       }).catch((e) => { failure(preview, e); ready = undefined; });
     }

@@ -1,3 +1,9 @@
+export interface RepoHome {
+  repo: string;
+  pulls: { number: number; title: string; author: string; draft: boolean }[];
+  error?: string;
+}
+
 export interface RepoSnapshot {
   repo: string;
   branch: string;
