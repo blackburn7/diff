@@ -1,15 +1,16 @@
 import { h } from './dom.ts';
 import { Highlighter } from './highlight.ts';
 import type { Tok } from './diff.ts';
+import { failure, ic, message, timeEl } from './repo-shared.ts';
 import type { RepoBranches, RepoEntry, RepoFile, RepoPaths, RepoSnapshot, RepoTree } from '../repository-types.ts';
 
-const boot = (window as unknown as { __repoBoot: { owner: string; repo: string; workerHash: string } }).__repoBoot;
+const boot = (window as unknown as { __repoBoot: { owner: string; repo: string; workerHash: string; snapshot?: Promise<RepoSnapshot> } }).__repoBoot;
 const repo = `${boot.owner}/${boot.repo}`;
 const base = `/${repo}`;
 const api = `/api/repo/${repo}`;
-const ic = (name: string) => h('span', { class: `octicon octicon-${name}`, 'aria-hidden': true });
-const message = (text: string) => h('div', { class: 'repo-message', role: 'status' }, text);
-const size = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const enc = (path: string) => path.split('/').map(encodeURIComponent).join('/');
+const shortRef = (ref: string) => /^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 7) : ref;
+const size = (n: number) => n < 1024 ? `${n} Bytes` : n < 1048576 ? `${(n / 1024).toFixed(2)} KB` : `${(n / 1048576).toFixed(2)} MB`;
 const join = (dir: string, name: string) => dir ? `${dir}/${name}` : name;
 const parent = (path: string) => path.split('/').slice(0, -1).join('/');
 const sorted = (entries: RepoEntry[]) => [...entries].sort((a, b) => Number(b.type === 'tree') - Number(a.type === 'tree') || a.path.localeCompare(b.path));
@@ -59,11 +60,10 @@ function tree(sha: string) {
   return p;
 }
 
+/** GitHub's URL shape: /owner/repo, /owner/repo/tree/<ref>/<dir>, /owner/repo/blob/<ref>/<file>. */
 function href(path = '', type = 'tree', snap = snapshot) {
-  const q = new URLSearchParams();
-  if (snap) { q.set('ref', snap.branch); q.set('commit', snap.sha); }
-  if (path) q.set('path', path);
-  return `${base}/${type === 'blob' ? 'blob' : 'tree'}?${q}`;
+  if (!snap || (!path && snap.branch === snap.defaultBranch)) return base;
+  return `${base}/${type === 'blob' ? 'blob' : 'tree'}/${enc(snap.branch)}${path ? `/${enc(path)}` : ''}`;
 }
 
 function link(path: string, name: string, type = 'tree', className = '') {
@@ -76,37 +76,20 @@ function link(path: string, name: string, type = 'tree', className = '') {
   return a;
 }
 
-const branchButton = h('button', { class: 'btn repo-branch-button', type: 'button', 'aria-haspopup': 'dialog', 'aria-label': 'Switch branch' }, 'Loading branch…');
-const branchLabel = h('span');
-const findButton = h('button', { class: 'btn', type: 'button' }, ic('search'), 'Go to file');
-findButton.title = 'Go to file (⌘K)';
-const grepButton = h('button', { class: 'btn', type: 'button', title: 'Search file contents (⌘⇧K)' }, 'Search code');
-const refreshButton = h('button', { class: 'btn', type: 'button', title: 'Load the latest commit on this branch' }, 'Refresh');
+const branchButton = h('button', { class: 'btn repo-branch-button', type: 'button', 'aria-haspopup': 'dialog', 'aria-label': 'Switch branches or tags' }, ic('git-branch'), h('span', {}, '…'), h('span', { class: 'dropdown-caret' }));
+const findButton = h('button', { class: 'repo-goto', type: 'button' }, ic('search'), h('span', {}, 'Go to file'), h('kbd', {}, 't'));
+const grepButton = h('button', { class: 'btn btn-icon', type: 'button', title: 'Search code (⌘⇧K)', 'aria-label': 'Search code' }, ic('search'));
 const sidebarList = h('nav', { class: 'repo-tree', 'aria-label': 'Repository files' });
 const breadcrumbs = h('nav', { class: 'repo-breadcrumbs', 'aria-label': 'Breadcrumbs' });
 const main = h('main', { class: 'repo-content', id: 'repo-content', 'aria-live': 'polite' });
 const commitBar = h('div', { class: 'repo-commit' });
-const badge = h('span', { class: 'Label' });
-const ownerAvatar = h('img', { width: 32, height: 32, alt: `${boot.owner} avatar`, hidden: true, decoding: 'async' });
-const sidebar = h('aside', { class: 'repo-sidebar' }, h('div', { class: 'repo-sidebar-heading' }, h('strong', {}, 'Files'), branchLabel), sidebarList);
-const header = h('header', { class: 'repo-header' },
-  h('div', { class: 'repo-title' }, h('a', { class: 'repo-brand', href: '/', title: boot.owner }, ownerAvatar),
-    h('a', { href: '/' }, boot.owner), h('span', { class: 'muted' }, '/'), h('a', { href: `${base}/tree` }, h('strong', {}, boot.repo)), badge),
-  h('a', { class: 'btn', href: `https://github.com/${repo}`, target: '_blank', rel: 'noreferrer' }, 'View on GitHub'));
-const nav = h('nav', { class: 'repo-tabs', 'aria-label': 'Repository navigation' },
-  h('a', { href: `${base}/tree`, class: 'selected', 'aria-current': 'page' }, ic('code'), 'Code'),
-  h('a', { href: '/' }, ic('git-pull-request'), 'Pull requests'));
-const toolbar = h('div', { class: 'repo-toolbar' }, branchButton, breadcrumbs, h('div', { class: 'repo-toolbar-actions' }, findButton, grepButton, refreshButton));
-document.getElementById('app')!.replaceChildren(header, nav, toolbar,
-  h('div', { class: 'repo-layout' }, sidebar, h('div', { class: 'repo-main' }, commitBar, main)));
-
-function failure(container: HTMLElement, error: unknown) {
-  container.replaceChildren(h('div', { class: 'flash flash-error', role: 'alert' }, error instanceof Error ? error.message : String(error)));
-}
+const sidebar = h('aside', { class: 'repo-sidebar' },
+  h('div', { class: 'repo-sidebar-head' }, h('h2', {}, 'Files'), h('div', { class: 'repo-sidebar-tools' }, branchButton, grepButton), findButton), sidebarList);
+document.getElementById('app')!.append(h('div', { class: 'repo-layout' }, sidebar, h('div', { class: 'repo-main' }, breadcrumbs, commitBar, main)));
 
 function paintBreadcrumbs(path: string) {
-  breadcrumbs.replaceChildren(link('', boot.repo));
   const parts = path ? path.split('/') : [];
+  breadcrumbs.replaceChildren(parts.length ? link('', boot.repo) : h('strong', {}, boot.repo));
   parts.forEach((name, i) => {
     breadcrumbs.append(h('span', { class: 'muted' }, '/'), i === parts.length - 1 ? h('strong', {}, name) : link(parts.slice(0, i + 1).join('/'), name));
   });
@@ -126,7 +109,7 @@ function paintTree(container: HTMLElement, entries: RepoEntry[], directory: stri
     const children = h('div', { class: 'repo-tree-children' });
     const a = link(path, entry.path, 'tree');
     a.prepend(ic('file-directory-fill'));
-    const summary = h('summary', {}, a);
+    const summary = h('summary', {}, ic('chevron-right'), a);
     const details = h('details', { class: 'repo-tree-folder' }, summary, children);
     let loading: Promise<void> | undefined;
     const load = () => loading ??= (async () => {
@@ -156,24 +139,22 @@ async function selectTree(path: string, generation: number, id: number) {
   sidebarList.querySelectorAll<HTMLAnchorElement>('a[data-path]').forEach((a) => {
     if (a.dataset.path === path) {
       a.setAttribute('aria-current', 'page');
-      const row = a.getBoundingClientRect(), box = sidebar.getBoundingClientRect();
-      if (row.top < box.top || row.bottom > box.bottom) sidebar.scrollTop += row.top - box.top - box.height / 2;
+      const row = a.getBoundingClientRect(), box = sidebarList.getBoundingClientRect();
+      if (row.top < box.top || row.bottom > box.bottom) sidebarList.scrollTop += row.top - box.top - box.height / 2;
     }
   });
 }
 
 function directoryView(entries: RepoEntry[], path: string, truncated: boolean) {
   const body = h('tbody');
-  if (path) body.append(h('tr', {}, h('td', { colspan: 3 }, link(parent(path), '..'))));
+  if (path) body.append(h('tr', { class: 'repo-directory-parent' }, h('td', {}, link(parent(path), '..'))));
   for (const entry of sorted(entries)) {
     const folder = entry.type === 'tree';
     const a = link(join(path, entry.path), entry.path, folder ? 'tree' : 'blob');
-    body.append(h('tr', {}, h('td', {}, ic(folder ? 'file-directory-fill' : entry.type === 'commit' ? 'file-moved' : 'file'), a),
-      h('td', { class: 'muted' }, folder ? 'Directory' : entry.type === 'commit' ? 'Submodule' : entry.mode === '120000' ? 'Symbolic link' : 'File'),
-      h('td', { class: 'repo-file-size muted' }, entry.size == null ? '' : size(entry.size))));
+    body.append(h('tr', {}, h('td', {}, ic(folder ? 'file-directory-fill' : entry.type === 'commit' ? 'file-moved' : 'file'), a)));
   }
-  main.replaceChildren(h('div', { class: 'repo-box' }, h('div', { class: 'repo-box-heading' }, h('strong', {}, path || boot.repo), h('span', { class: 'muted' }, `${entries.length} items`)),
-    h('table', { class: 'repo-directory', 'aria-label': 'Directory contents' }, h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Type'), h('th', {}, 'Size'))), body)));
+  main.replaceChildren(h('div', { class: 'repo-box' },
+    h('table', { class: 'repo-directory', 'aria-label': 'Directory contents' }, h('thead', {}, h('tr', {}, h('th', {}, 'Name'))), body)));
   if (truncated) main.append(message('GitHub returned a partial listing for this directory.'));
   if (!entries.length) main.append(message('This directory is empty.'));
 }
@@ -200,38 +181,39 @@ function markdownRenderer() {
 
 async function fileView(entry: RepoEntry, file: RepoFile, path: string, id: number) {
   const snap = snapshot!;
-  const external = `https://github.com/${repo}/blob/${snapshot!.sha}/${path.split('/').map(encodeURIComponent).join('/')}`;
-  const actions = h('div', { class: 'repo-file-actions' });
-  const heading = h('div', { class: 'repo-box-heading' }, h('span', {}, h('strong', {}, entry.mode === '120000' ? 'Symbolic link' : 'Code'), ' · ', size(file.size)), actions);
+  const summary = h('div', { class: 'repo-file-summary' });
+  const actions = h('div', { class: 'repo-file-actions BtnGroup' });
+  const heading = h('div', { class: 'repo-box-heading' }, summary, actions);
   const content = h('div', { class: 'repo-file-body' });
   main.replaceChildren(h('section', { class: 'repo-box' }, heading, content));
-  actions.append(h('a', { class: 'btn btn-sm', href: external, target: '_blank', rel: 'noreferrer' }, 'GitHub'));
-  if (file.tooLarge) { content.append(message('This file is larger than 2 MB. Open it on GitHub to view or download it.')); return; }
-  actions.prepend(h('a', { class: 'btn btn-sm', href: rawURL(path), target: '_blank', rel: 'noreferrer' }, 'Raw'),
-    h('a', { class: 'btn btn-sm', href: rawURL(path, { download: '1' }) }, ic('download')));
-  actions.querySelector('a[href*="download"]')?.setAttribute('aria-label', 'Download file');
+  const info = h('span', { class: 'repo-file-info' }, entry.mode === '120000' ? 'Symbolic link · ' : '', size(file.size));
+  summary.append(info);
+  if (file.tooLarge) { content.append(message('This file is larger than 2 MB. Download it to view its contents.')); }
+  actions.append(h('a', { class: 'btn btn-sm', href: rawURL(path), target: '_blank', rel: 'noreferrer' }, 'Raw'));
+  const download = h('a', { class: 'btn btn-sm btn-icon', href: rawURL(path, { download: '1' }), 'aria-label': 'Download raw file', title: 'Download raw file' }, ic('download'));
+  if (file.tooLarge) { actions.append(download); return; }
   if (file.binary) {
+    actions.append(download);
     if (/\.(png|jpe?g|gif|webp|ico)$/i.test(path)) content.append(h('div', { class: 'repo-image' }, h('img', { src: rawURL(path, { image: '1' }), alt: path })));
     else content.append(message('Binary file. Download it to view its contents.'));
     return;
   }
   const text = file.text ?? '';
   const lines = text ? text.replace(/\n$/, '').split('\n') : [];
-  heading.firstElementChild!.append(` · ${lines.length.toLocaleString()} lines`);
-  const copy = h('button', { class: 'btn btn-sm', type: 'button' }, 'Copy');
+  const loc = lines.filter((l) => l.trim()).length;
+  info.prepend(`${lines.length.toLocaleString()} lines (${loc.toLocaleString()} loc) · `);
+  const copy = h('button', { class: 'btn btn-sm btn-icon', type: 'button', 'aria-label': 'Copy raw content', title: 'Copy raw content' }, ic('copy'));
   copy.onclick = async () => {
-    try { await navigator.clipboard.writeText(text); copy.textContent = 'Copied!'; }
-    catch { copy.textContent = 'Copy unavailable'; }
+    try { await navigator.clipboard.writeText(text); copy.replaceChildren(ic('check')); copy.classList.add('is-copied'); }
+    catch { copy.title = 'Copy unavailable'; }
+    setTimeout(() => { copy.replaceChildren(ic('copy')); copy.classList.remove('is-copied'); }, 2000);
   };
-  actions.prepend(copy);
+  actions.append(copy, download);
   if (!lines.length) { content.append(message('This file is empty.')); return; }
   const tbody = h('tbody');
   const code = h('table', { class: 'repo-code', 'aria-label': path }, tbody);
   const more = h('button', { class: 'repo-load-more btn', type: 'button' }, 'Load more lines');
   const source = h('div', { class: 'repo-source' }, code);
-  const wrap = h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': 'false' }, 'Wrap');
-  wrap.onclick = () => wrap.setAttribute('aria-pressed', String(code.classList.toggle('wrap')));
-  actions.prepend(wrap);
   content.append(source);
   let rendered = 0;
   let tokens: Tok[][] | undefined;
@@ -270,18 +252,18 @@ async function fileView(entry: RepoEntry, file: RepoFile, path: string, id: numb
       tbody.querySelectorAll<HTMLElement>('.repo-line-code').forEach((cell, i) => paintLine(cell, i));
     }
   }
+  const codeButton = h('button', { type: 'button', role: 'tab', 'aria-selected': 'true' }, ic('code'), 'Code');
+  const tabs = h('span', { class: 'repo-file-tabs', role: 'tablist', 'aria-label': 'File view' }, codeButton);
+  summary.prepend(tabs);
   if (!/\.(md|markdown|mdown|mkd)$/i.test(path) || entry.mode === '120000') { void renderCode(); return; }
   const preview = h('article', { class: 'markdown-body repo-markdown', role: 'tabpanel', 'aria-label': 'Markdown preview' });
   source.setAttribute('role', 'tabpanel'); source.setAttribute('aria-label', 'Markdown source');
   content.prepend(preview);
-  const previewButton = h('button', { type: 'button', role: 'tab' }, 'Preview');
-  const codeButton = h('button', { type: 'button', role: 'tab' }, 'Code');
-  const tabs = h('span', { class: 'repo-file-tabs', role: 'tablist', 'aria-label': 'File view' }, previewButton, codeButton);
-  heading.firstElementChild!.replaceChildren(tabs, h('span', { class: 'muted' }, `${size(file.size)} · ${lines.length.toLocaleString()} lines`));
-  heading.firstElementChild!.classList.add('repo-file-summary');
+  const previewButton = h('button', { type: 'button', role: 'tab' }, ic('eye'), 'Preview');
+  tabs.prepend(previewButton);
   let ready: Promise<void> | undefined;
   function showPreview(show: boolean) {
-    preview.hidden = !show; source.hidden = show; wrap.hidden = show;
+    preview.hidden = !show; source.hidden = show;
     previewButton.setAttribute('aria-selected', String(show)); codeButton.setAttribute('aria-selected', String(!show));
     if (!show) { void renderCode(); return; }
     if (!ready) {
@@ -325,7 +307,7 @@ async function navigate(path: string, push = true, line = 0, hash = '') {
     const url = href(path, currentType, snap) + (line ? `#L${line}` : hash || (push ? '' : location.hash));
     if (push) history.pushState(null, '', url); else history.replaceState(null, '', url);
     if (push || !location.hash) window.scrollTo({ top: 0 });
-    document.title = `${path || boot.repo} at ${snap.branch} · ${repo}`;
+    document.title = `${path ? `${boot.repo}/${path}` : repo} at ${shortRef(snap.branch)} · ${repo}`;
     if (result.entries) directoryView(result.entries, path, !!result.truncated);
     else if (result.file) void fileView(result.entry, result.file, path, id);
     else main.replaceChildren(message(`Git submodule at commit ${result.entry.sha}. Browse the submodule repository to view its files.`));
@@ -339,39 +321,34 @@ async function navigate(path: string, push = true, line = 0, hash = '') {
   }
 }
 
-async function loadBranch(branch = '', commit = '', path = '') {
+/** Loads the snapshot for a `<ref>/<path>` spec (the default branch when empty). */
+async function loadBranch(spec: string, prefetched?: Promise<RepoSnapshot>) {
   const generation = ++epoch;
   ++navigation;
   snapshot = null;
   folders.clear();
   branchButton.disabled = true;
-  branchButton.textContent = branch || 'Loading branch…';
   commitBar.replaceChildren(message('Loading repository…'));
   sidebarList.replaceChildren(message('Loading files…'));
   main.replaceChildren(message('Loading files…'));
   try {
-    const snap = await get<RepoSnapshot & { root: RepoTree }>('snapshot', { ref: branch, commit, include: 'root' });
+    const snap = await (prefetched ?? get<RepoSnapshot>('snapshot', { spec }));
     if (generation !== epoch) return;
     snapshot = snap;
-    // Keep even a missing-path page pinned to the branch snapshot we resolved.
-    history.replaceState(null, '', href(path, location.pathname.endsWith('/blob') ? 'blob' : 'tree', snap) + location.hash);
-    branchButton.replaceChildren(ic('git-branch'), h('span', {}, snap.branch), ic('chevron-down'));
-    branchLabel.textContent = snap.branch;
-    badge.textContent = snap.private ? 'Private' : 'Public';
-    ownerAvatar.src = snap.ownerAvatar;
-    ownerAvatar.hidden = false;
-    const date = new Date(snap.date);
-    commitBar.replaceChildren(h('img', { class: 'repo-avatar', src: snap.authorAvatar, width: 24, height: 24, alt: snap.author, decoding: 'async' }),
+    branchButton.replaceChildren(ic('git-branch'), h('span', {}, shortRef(snap.branch)), h('span', { class: 'dropdown-caret' }));
+    branchButton.title = snap.branch;
+    commitBar.replaceChildren(h('img', { class: 'repo-avatar', src: snap.authorAvatar, width: 20, height: 20, alt: '', decoding: 'async' }),
       h('strong', {}, snap.author), h('span', { class: 'repo-commit-message', title: snap.message }, snap.message),
-      h('a', { class: 'repo-sha', href: `https://github.com/${repo}/commit/${snap.sha}`, title: snap.sha, target: '_blank', rel: 'noreferrer' }, snap.sha.slice(0, 7)),
-      h('time', { datetime: snap.date, title: date.toLocaleString(), class: 'muted' }, date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })));
-    commitBar.title = `Branch snapshot · ${snap.sha}`;
+      h('span', { class: 'repo-commit-meta' },
+        h('a', { class: 'repo-sha', href: `https://github.com/${repo}/commit/${snap.sha}`, title: snap.sha, target: '_blank', rel: 'noreferrer' }, snap.sha.slice(0, 7)),
+        ' · ', timeEl(snap.date)));
     const root = snap.root;
     trees.set(snap.tree, Promise.resolve(root));
     while (trees.size > 128) trees.delete(trees.keys().next().value!);
     paintTree(sidebarList, root.entries, '', generation);
     if (root.truncated) sidebarList.append(message('Some entries were omitted by GitHub.'));
-    await navigate(path, false);
+    // replaceState rewrites legacy ?ref= URLs and trailing slashes into the canonical shape.
+    await navigate(snap.path, false);
   } catch (e) { if (generation === epoch) { failure(main, e); sidebarList.replaceChildren(); commitBar.replaceChildren(); } }
   finally { if (generation === epoch) branchButton.disabled = false; }
 }
@@ -443,7 +420,12 @@ branchButton.onclick = () => {
       const names = !input.value && !cursor && snapshot ? [...new Set([snapshot.branch, snapshot.defaultBranch, ...data.names])] : data.names;
       for (const name of names) {
         const button = h('button', { class: 'repo-choice', type: 'button' }, h('span', { class: 'repo-choice-label' }, name), name === snapshot?.defaultBranch ? h('span', { class: 'Label' }, 'default') : null, name === snapshot?.branch ? ic('check') : null);
-        button.onclick = () => { modal.close(); history.pushState(null, '', `${base}/tree?${new URLSearchParams({ ref: name, ...(currentPath ? { path: currentPath } : {}) })}`); void loadBranch(name, '', currentPath); };
+        button.onclick = () => {
+          modal.close();
+          const spec = join(name, currentPath);
+          history.pushState(null, '', `${base}/${currentType}/${enc(spec)}`);
+          void loadBranch(spec);
+        };
         list.append(button);
       }
       if (!names.length) list.append(message('No matching branches.'));
@@ -486,12 +468,10 @@ findButton.onclick = async () => {
   } catch (e) { if (modal.open) failure(list, e); }
 };
 
-refreshButton.onclick = () => { if (snapshot) void loadBranch(snapshot.branch, '', currentPath); else void fromURL(); };
-
 grepButton.onclick = () => {
   if (!snapshot) return;
   const snap = snapshot;
-  const { modal, input, list, options } = dialog(`Search code · ${snap.branch}`, 'Search file contents…');
+  const { modal, input, list, options } = dialog(`Search code · ${shortRef(snap.branch)}`, 'Search file contents…');
   const regex = h('input', { type: 'checkbox', 'aria-label': 'Use regular expression' });
   options.prepend(h('label', { class: 'repo-regex' }, regex, 'Regex'));
   list.replaceChildren(message('Search every tracked text file at this commit.'));
@@ -534,13 +514,23 @@ grepButton.onclick = () => {
   regex.onchange = schedule;
   modal.addEventListener('close', () => { ++sequence; clearTimeout(timer); pending?.abort(); });
 };
-async function fromURL() {
+
+/** The `<ref>/<path>` spec in the address bar; legacy `?ref=&commit=&path=` URLs map onto it. */
+function urlSpec() {
+  const segs = location.pathname.split('/').slice(4);
+  if (segs.length) return segs.map(decodeURIComponent).join('/').replace(/\/+$/, '');
   const q = new URLSearchParams(location.search);
-  const branch = q.get('ref') ?? '';
-  const commit = q.get('commit') ?? '';
-  const path = q.get('path') ?? '';
-  if (snapshot && snapshot.branch === branch && snapshot.sha === commit) await navigate(path, false);
-  else await loadBranch(branch, commit, path);
+  return join(q.get('commit') || q.get('ref') || '', q.get('path') || '');
+}
+
+async function fromURL(initial = false) {
+  const spec = urlSpec();
+  if (snapshot) {
+    const b = snapshot.branch;
+    if (spec === b || spec.startsWith(`${b}/`)) return navigate(spec.slice(b.length + 1), false);
+    if (!spec && b === snapshot.defaultBranch) return navigate('', false);
+  }
+  await loadBranch(spec, initial ? boot.snapshot : undefined);
 }
 window.addEventListener('popstate', () => void fromURL());
 window.addEventListener('hashchange', () => main.querySelector('.repo-line-selected')?.classList.remove('repo-line-selected'));
@@ -554,4 +544,4 @@ window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement)?.matches('input,textarea') || document.querySelector('dialog[open]')) return;
   if (e.key === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); findButton.click(); }
 });
-void fromURL();
+void fromURL(true);

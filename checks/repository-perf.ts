@@ -10,9 +10,9 @@ const opt = (name: string, fallback = '') => args.includes(name) ? args[args.ind
 const base = opt('--base', 'http://127.0.0.1:7717');
 const repo = opt('--repo', 'AuctorAI/auctor');
 const runs = Number(opt('--runs', '5'));
-const snapshot = await fetch(`${base}/api/repo/${repo}/snapshot?${new URLSearchParams({ ref: 'dev', commit: opt('--commit') })}`).then((r) => r.json()) as { sha: string; branch: string };
+const snapshot = await fetch(`${base}/api/repo/${repo}/snapshot?${new URLSearchParams({ spec: opt('--commit') || 'dev' })}`).then((r) => r.json()) as { sha: string; branch: string };
 if (!snapshot.sha) throw new Error('Snapshot could not be loaded');
-const root = `${base}/${repo}/tree?${new URLSearchParams({ ref: snapshot.branch, commit: snapshot.sha })}`;
+const root = `${base}/${repo}/tree/${snapshot.sha}`;
 const cache = join(homedir(), 'Library/Caches/ms-playwright');
 const installed = existsSync(cache) ? readdirSync(cache).filter((n) => n.startsWith('chromium_headless_shell-')).sort().reverse()[0] : '';
 const executable = process.env.REPO_BROWSER_EXECUTABLE || (installed ? join(cache, installed, 'chrome-headless-shell-mac-arm64/chrome-headless-shell') : undefined);

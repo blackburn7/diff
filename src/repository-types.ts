@@ -1,11 +1,6 @@
-export interface RepoHome {
-  repo: string;
-  pulls: { number: number; title: string; author: string; draft: boolean }[];
-  error?: string;
-}
-
 export interface RepoSnapshot {
   repo: string;
+  /** The branch name, or the full commit ID when the URL pinned a commit. */
   branch: string;
   defaultBranch: string;
   private: boolean;
@@ -13,9 +8,11 @@ export interface RepoSnapshot {
   tree: string;
   message: string;
   author: string;
-  ownerAvatar: string;
   authorAvatar: string;
   date: string;
+  /** The path that followed the branch name in the URL. */
+  path: string;
+  root: RepoTree;
 }
 
 export interface RepoEntry {
@@ -49,4 +46,21 @@ export interface RepoFile {
   text: string | null;
   tooLarge: boolean;
   lang: string;
+}
+
+export interface RepoPull {
+  number: number;
+  title: string;
+  author: string;
+  state: 'open' | 'draft' | 'merged' | 'closed';
+  /** When it was opened, or closed or merged for a closed PR. */
+  at: string;
+}
+
+export interface RepoPulls {
+  open: number;
+  closed: number;
+  pulls: RepoPull[];
+  cursor: string | null;
+  more: boolean;
 }

@@ -108,7 +108,11 @@ async function route(req: Request, url: URL): Promise<Response> {
       'content-security-policy': "frame-ancestors 'none'",
     });
   }
-  if (path === '/' && !process.env.PRV_REPO) return text(indexPage({ css: client.css, hash: client.hash }), 'text/html; charset=utf-8');
+  if (path === '/') {
+    const home = process.env.PRV_REPO;
+    if (home) return new Response(null, { status: 302, headers: { location: `/${home}/pulls` } });
+    return text(indexPage({ css: client.css, hash: client.hash }), 'text/html; charset=utf-8');
+  }
   if (path === '/app.js') {
     return text(client.js, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
   }
@@ -186,9 +190,9 @@ async function route(req: Request, url: URL): Promise<Response> {
   }
 
   // No repository imports, builds, or route checks on the original PR paths.
-  if (path === '/' || path.startsWith('/api/repo/') || path === '/api/markdown-assets'
-    || /^\/(?:home|repo|markdown)\.(?:js|css)$/.test(path)
-    || /^\/[\w.-]+\/[\w.-]+\/(?:tree|blob)\/?$/.test(path)) {
+  if (path.startsWith('/api/repo/') || path === '/api/markdown-assets'
+    || /^\/(?:repo|pulls|markdown)\.(?:js|css)$/.test(path)
+    || /^\/(?!api\/)[\w.-]+\/[\w.-]+(?:\/?$|\/(?:tree|blob|pulls)(?:\/|$))/.test(path)) {
     const extra = await (repositoryRoutes ??= import('./repository-routes.ts'));
     const response = await extra.routeRepository(req, url, client);
     if (response) return response;

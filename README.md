@@ -19,21 +19,25 @@ it shadows `/usr/bin/diff` through a tiny shim in `~/.local/bin/diff` — anythi
 
 needs `bun`, `git`, and `gh` (logged in). auth is just `gh auth token`, so whatever you can see on github, this can see.
 
-Set `PRV_REPO=owner/repo` when starting the server to use a repository start page.
-Refresh to reload its 30 most recently updated open PRs, click a PR, or enter its
-number. Without this setting, the original PR URL input is shown.
+Set `PRV_REPO=owner/repo` when starting the server and `/` redirects to that
+repository's pull request list at `/owner/repo/pulls`: GitHub's list, minus the
+filters. Open and closed tabs, 25 per page, the search box filters the loaded
+page, and typing `#123` (or a PR URL) and pressing Enter opens that PR. Without
+this setting, the original PR URL input is shown.
 
-The repository start page's **Code · Browse repository** link opens a GitHub-style file explorer.
-You can also open `http://127.0.0.1:7717/owner/repo/tree` directly. Search
-or page through branches, expand folders, or press `⌘K` (`Ctrl+K`) or `t` to find a file. The URL
-records the selected branch, commit, and path, so shared links show the same
-snapshot; **Refresh** loads the branch's latest commit. File views include syntax
-highlighting, line links, wrapping, copy, raw text, downloads, and image previews.
-This reads GitHub through the existing `gh` login without changing a local checkout.
-Files above 2 MB link to GitHub, and non-text files can be downloaded.
-Markdown opens in a GitHub-style preview with Preview/Code tabs, tables, task
-lists, highlighted code blocks, and links and images pinned to the selected
-commit. The Markdown renderer loads only when a Markdown file is opened.
+Every repository page uses GitHub's own URL shapes, so a GitHub link works here
+with only the host swapped: `/owner/repo`, `/owner/repo/tree/<ref>/<path>`,
+`/owner/repo/blob/<ref>/<path>`, `/owner/repo/pulls`, `/owner/repo/pull/N`.
+The Code tab is GitHub's file explorer: a branch switcher, "Go to file" (`t` or
+`⌘K` / `Ctrl+K`), a folder tree, the latest commit for the path, and the
+directory table. File views have syntax highlighting, line links, copy, raw
+text, and downloads; images preview inline. A reload fetches the branch's
+current head, so there's no refresh button. This reads GitHub through the
+existing `gh` login without changing a local checkout. Files above 2 MB link
+to GitHub, and non-text files can be downloaded. Markdown opens in a
+GitHub-style preview with Preview/Code tabs, tables, task lists, highlighted
+code blocks, and links and images pinned to the selected commit. The Markdown
+renderer loads only when a Markdown file is opened.
 
 `⌘⇧K` (`Ctrl+Shift+K`) searches file contents across the selected commit, with
 literal and regex modes and links to matching lines. The first search downloads
@@ -114,10 +118,10 @@ prepared. It reports medians over five fresh browser contexts; GitHub object and
 search caches remain warm in the local server. Set `REPO_BROWSER_EXECUTABLE` to
 use an installed Chromium executable, or install Playwright Chromium.
 
-The repository feature has its own lazy server routes and builds. Homepage,
-repository, and Markdown assets have separate content hashes; editing them does
-not invalidate the PR client's cache. The PR app, CSS, worker, and generated PR
-and export HTML match upstream. Directory browsing starts no syntax worker;
+The repository feature has its own lazy server routes and builds. Pull request
+list, repository, and Markdown assets have separate content hashes; editing them does
+not invalidate the PR client's cache.
+Directory browsing starts no syntax worker;
 Markdown builds on its first preview, and the grep backend loads on first search.
 `bun test test/isolation.test.ts` checks these server boundaries, including
 concurrent requests, rebuilds, and asset cache headers.

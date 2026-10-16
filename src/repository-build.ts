@@ -1,7 +1,7 @@
 // Optional assets are built once, on demand. None participate in the PR hash.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildCss } from './build.ts';
 
 const ROOT = join(import.meta.dir, '..');
 export interface FeatureBuild { js: string; css: string; hash: string }
@@ -11,7 +11,7 @@ async function build(entry: string, stylesheet: string): Promise<FeatureBuild> {
   if (!result.success) throw new AggregateError(result.logs, `build of ${entry} failed`);
   if (result.outputs.length !== 1) throw new Error(`${entry} produced ${result.outputs.length} outputs`);
   const js = await result.outputs[0]!.text();
-  const css = readFileSync(join(ROOT, stylesheet), 'utf8');
+  const css = await buildCss(stylesheet);
   const hash = createHash('sha1').update(js).update(css).digest('hex').slice(0, 10);
   return { js, css, hash };
 }
@@ -28,7 +28,7 @@ function cached(entry: string, stylesheet: string): Promise<FeatureBuild> {
   return pending;
 }
 
-export const homeBuild = () => cached('src/client/home.ts', 'src/client/home.css');
+export const pullsBuild = () => cached('src/client/pulls.ts', 'src/client/repository.css');
 export const repositoryBuild = () => cached('src/client/repository.ts', 'src/client/repository.css');
 export const markdownBuild = () => cached('src/client/markdown.ts', 'node_modules/github-markdown-css/github-markdown.css');
 export const resetBuilds = () => builds.clear();

@@ -42,19 +42,19 @@ test('PR startup and rebuild never import or build optional repository features'
     const original = await fetch(`${base}/app.js`).then((r) => r.text());
     const index = await fetch(`${base}/`).then((r) => r.text());
     expect(index).toContain("window.__prvBoot={mode:'index'};");
-    expect(index).not.toContain('/home.js');
+    expect(index).not.toContain('/pulls.js');
     expect((await fetch(`${base}/not-a-route`)).status).toBe(404);
     const html = await fetch(`${base}/example/repo/pull/1`).then((r) => r.text());
     expect(html).toContain('/app.js?v=');
-    expect(html).not.toMatch(/repo\.js|markdown|home\.js/);
+    expect(html).not.toMatch(/repo\.js|markdown|pulls\.js/);
     await fetch(`${base}/hl-worker.js`);
     const before = await probe();
-    expect(before.builds.map((p) => p.split('/').pop())).toEqual(['app.ts', 'hl-worker.ts']);
+    expect(before.builds.map((p) => p.split('/').pop())).toEqual(['app.ts', 'hl-worker.ts', 'style.css']);
     expect(before.modules.filter((p) => /\/repository[^/]*\.ts$/.test(p))).toEqual([]);
 
     const hash = await fetch(`${base}/api/rebuild`, { method: 'POST' }).then((r) => r.json()) as { hash: string };
     const rebuilt = await probe();
-    expect(rebuilt.builds.length).toBe(4);
+    expect(rebuilt.builds.length).toBe(6);
     expect(rebuilt.modules.filter((p) => /\/repository[^/]*\.ts$/.test(p))).toEqual([]);
 
     // Concurrent first-use requests share a build. Browsing a directory does
@@ -64,6 +64,8 @@ test('PR startup and rebuild never import or build optional repository features'
     expect(directoryView.builds.filter((p) => p.endsWith('/repository.ts')).length).toBe(1);
     expect(directoryView.modules.some((p) => /\/(repository-search|repository-github|repository)\.ts$/.test(p))).toBe(false);
     expect(directoryView.builds.some((p) => p.endsWith('/markdown.ts'))).toBe(false);
+    await Promise.all([1, 2].map(() => fetch(`${base}/example/repo/pulls`).then((r) => r.text())));
+    expect((await probe()).builds.filter((p) => p.endsWith('/pulls.ts')).length).toBe(1);
 
     const metadata = await fetch(`${base}/api/markdown-assets`).then((r) => r.json()) as { hash: string };
     const styles = await fetch(`${base}/markdown.css?v=${metadata.hash}`);
@@ -75,17 +77,17 @@ test('PR startup and rebuild never import or build optional repository features'
 
     const after = await fetch(`${base}/api/rebuild`, { method: 'POST' }).then((r) => r.json()) as { hash: string };
     expect(after.hash).toBe(hash.hash);
-    expect((await probe()).builds.filter((p) => /\/(repository|markdown|home)\.ts$/.test(p)).length).toBe(2);
+    expect((await probe()).builds.filter((p) => /\/(repository|markdown|pulls)\.ts$/.test(p)).length).toBe(3);
     expect(await fetch(`${base}/example/repo/pull/1`).then((r) => r.text())).toBe(html);
 
     // A broken optional bundle neither poisons PR serving nor remains cached
     // forever after the problem is fixed.
-    await fetch(`${base}/__probe?break=home.ts`);
-    expect((await fetch(`${base}/home.js`)).status).toBe(500);
+    await fetch(`${base}/__probe?break=pulls.ts`);
+    expect((await fetch(`${base}/pulls.js`)).status).toBe(500);
     expect(await fetch(`${base}/app.js`).then((r) => r.text())).toBe(original);
     expect((await fetch(`${base}/api/rebuild`, { method: 'POST' })).status).toBe(200);
     await fetch(`${base}/__probe?break=`);
-    expect((await fetch(`${base}/home.js`)).status).toBe(200);
+    expect((await fetch(`${base}/pulls.js`)).status).toBe(200);
   } finally {
     server.kill();
     await server.exited;

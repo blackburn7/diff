@@ -1,43 +1,53 @@
 // Loaded only after all original PR endpoints have been ruled out.
 import type { ClientBuild } from './build.ts';
-import { homeBuild, repositoryBuild, markdownBuild } from './repository-build.ts';
-import { homePage, repoPage } from './repository-html.ts';
+import { markdownBuild, pullsBuild, repositoryBuild } from './repository-build.ts';
+import { pullsPage, repoPage } from './repository-html.ts';
 export { resetBuilds } from './repository-build.ts';
 
-const DEFAULT_REPO = process.env.PRV_REPO;
 const json = (data: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(data), { ...init, headers: { 'content-type': 'application/json', ...init.headers } });
 const text = (body: string, type: string, extra: Record<string, string> = {}) =>
   new Response(body, { headers: { 'content-type': type, ...extra } });
 const pageHeaders = { 'cache-control': 'no-store', 'content-security-policy': "frame-ancestors 'none'" };
 
+// GitHub's URL shapes: /owner/repo, /owner/repo/tree/<ref>/<path>, /owner/repo/blob/<ref>/<path>.
+// `api` is not a GitHub login, so /api/* never reads as a repository page.
+const REPO_PAGE = /^\/(?!api\/)([\w.-]+)\/([\w.-]+)(?:\/(?:tree|blob)(?:\/(.*))?)?\/?$/;
+const PULLS_PAGE = /^\/(?!api\/)([\w.-]+)\/([\w.-]+)\/pulls\/?$/;
+
+/** The `<ref>/<path>` part of a page URL, decoded segment by segment. */
+export function pathSpec(rest = ''): string | null {
+  try { return rest.replace(/\/+$/, '').split('/').map(decodeURIComponent).join('/'); }
+  catch { return null; }
+}
+
 export async function routeRepository(req: Request, url: URL, client: ClientBuild): Promise<Response | null> {
   const path = url.pathname;
   let m: RegExpExecArray | null;
-  if (path === '/' && DEFAULT_REPO) {
-    const { loadRepoHome } = await import('./repository-github.ts');
-    const [assets, home] = await Promise.all([homeBuild(), loadRepoHome(DEFAULT_REPO).catch((e) => ({
-      repo: DEFAULT_REPO, pulls: [], error: e instanceof Error ? e.message : String(e),
-    }))]);
-    return text(homePage({ css: client.css, hash: client.hash, homeHash: assets.hash, home }), 'text/html; charset=utf-8', pageHeaders);
+  if ((m = PULLS_PAGE.exec(path))) {
+    const [assets, repo] = await Promise.all([pullsBuild(), repositoryBuild()]);
+    const state = url.searchParams.get('state') === 'closed' ? 'closed' : 'open';
+    return text(pullsPage({ owner: m[1]!, repo: m[2]!, state, after: url.searchParams.get('after') ?? '', css: client.css, hash: assets.hash, repoHash: repo.hash }), 'text/html; charset=utf-8', pageHeaders);
   }
-  if ((m = /^\/([\w.-]+)\/([\w.-]+)\/(?:tree|blob)\/?$/.exec(path))) {
+  if ((m = REPO_PAGE.exec(path))) {
+    const spec = pathSpec(m[3]);
+    if (spec == null) return new Response('bad request', { status: 400 });
     const assets = await repositoryBuild();
-    return text(repoPage({ owner: m[1]!, repo: m[2]!, css: client.css, hash: assets.hash, workerHash: client.hash }), 'text/html; charset=utf-8', pageHeaders);
+    return text(repoPage({ owner: m[1]!, repo: m[2]!, spec, css: client.css, hash: assets.hash, workerHash: client.hash }), 'text/html; charset=utf-8', pageHeaders);
   }
   if (path === '/api/markdown-assets') {
     const assets = await markdownBuild();
     return json({ hash: assets.hash }, { headers: { 'cache-control': 'no-store' } });
   }
-  if ((m = /^\/(home|repo|markdown)\.(js|css)$/.exec(path))) {
-    const build = m[1] === 'home' ? homeBuild : m[1] === 'repo' ? repositoryBuild : markdownBuild;
+  if ((m = /^\/(repo|pulls|markdown)\.(js|css)$/.exec(path))) {
+    const build = m[1] === 'repo' ? repositoryBuild : m[1] === 'pulls' ? pullsBuild : markdownBuild;
     const assets = await build();
     const js = m[2] === 'js';
     // A stale page must not cache new bytes under an old content hash.
     const cache = url.searchParams.get('v') === assets.hash ? 'public, max-age=31536000, immutable' : 'no-store';
     return text(js ? assets.js : assets.css, js ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8', { 'cache-control': cache });
   }
-  if ((m = /^\/api\/repo\/([\w.-]+)\/([\w.-]+)\/(snapshot|branches|tree|entry|paths|raw|grep)$/.exec(path))) {
+  if ((m = /^\/api\/repo\/([\w.-]+)\/([\w.-]+)\/(snapshot|pulls|branches|tree|entry|paths|raw|grep)$/.exec(path))) {
     if (req.method !== 'GET') return json({ error: 'Method not allowed' }, { status: 405 });
     return repositoryApi(req, url, m);
   }
@@ -45,7 +55,7 @@ export async function routeRepository(req: Request, url: URL, client: ClientBuil
 }
 
 async function repositoryApi(req: Request, url: URL, m: RegExpExecArray): Promise<Response> {
-  const { repoSnapshot, repoBranches, repoTree, repoEntry, repoFile, repoBlob, RepoError } = await import('./repository.ts');
+  const { repoSnapshot, repoPulls, repoBranches, repoTree, repoEntry, repoFile, repoBlob, RepoError } = await import('./repository.ts');
   try {
     const [owner, repo, action] = [m[1]!, m[2]!, m[3]!];
     const q = url.searchParams;
@@ -53,11 +63,8 @@ async function repositoryApi(req: Request, url: URL, m: RegExpExecArray): Promis
       const { grepRepository } = await import('./repository-search.ts');
       return json(await grepRepository(owner, repo, q.get('commit') ?? '', q.get('q') ?? '', q.get('regex') === '1', req.signal));
     }
-    if (action === 'snapshot') {
-      const snapshot = await repoSnapshot(owner, repo, q.get('ref') ?? '', q.get('commit') ?? '');
-      const root = q.get('include') === 'root' ? await repoTree(owner, repo, snapshot.tree) : undefined;
-      return json({ ...snapshot, ...(root ? { root } : {}) }, { headers: { 'cache-control': 'no-store' } });
-    }
+    if (action === 'snapshot') return json(await repoSnapshot(owner, repo, q.get('spec') ?? ''), { headers: { 'cache-control': 'no-store' } });
+    if (action === 'pulls') return json(await repoPulls(owner, repo, q.get('state') ?? 'open', q.get('after') || null), { headers: { 'cache-control': 'no-store' } });
     if (action === 'branches') return json(await repoBranches(owner, repo, q.get('q') ?? '', q.get('cursor')));
     if (action === 'tree') return json(await repoTree(owner, repo, q.get('sha') ?? ''));
     if (action === 'paths') {
